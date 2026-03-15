@@ -31,6 +31,17 @@ def _parse_ollama_model(value: str) -> str:
     return value
 
 
+def _parse_ollama_max_retries(value: str) -> int:
+    try:
+        parsed_value = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("--ollama-max-retries must be an integer") from exc
+
+    if parsed_value < 0:
+        raise argparse.ArgumentTypeError("--ollama-max-retries must be 0 or greater")
+    return parsed_value
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the auditable document pipeline.")
     parser.add_argument("--input", required=True, help="Path to the input text document.")
@@ -58,7 +69,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ollama-timeout-s", default=120.0, type=float, help="Ollama request timeout in seconds.")
     parser.add_argument("--ollama-temperature", default=0.0, type=float, help="Sampling temperature for Ollama generation.")
     parser.add_argument("--ollama-num-predict", default=2048, type=int, help="Maximum tokens to predict per Ollama call.")
-    parser.add_argument("--ollama-max-retries", default=2, type=int, help="Retries for invalid/non-JSON Ollama output.")
+    parser.add_argument(
+        "--ollama-max-retries",
+        default=2,
+        type=_parse_ollama_max_retries,
+        help="Retries for invalid/non-JSON Ollama output.",
+    )
     return parser
 
 
