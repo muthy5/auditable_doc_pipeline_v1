@@ -30,18 +30,21 @@ class OllamaLocalBackend(LocalLLMBackend):
         self.config = config
 
     def generate_json(self, pass_name: str, prompt_text: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        composed_prompt = self._compose_prompt(pass_name=pass_name, prompt_text=prompt_text, payload=payload)
-        last_error: Exception | None = None
-        for _attempt in range(self.config.max_retries + 1):
-            try:
-                raw_text = self._call_ollama(prompt=composed_prompt)
-                parsed = self._extract_json_object(raw_text)
-                if not isinstance(parsed, dict):
-                    raise OllamaResponseError("Parsed JSON is not an object.")
-                return parsed
-            except Exception as exc:  # noqa: BLE001
-                last_error = exc
-        raise OllamaResponseError(f"Failed to produce valid JSON after retries: {last_error}")
+        try:
+            composed_prompt = self._compose_prompt(pass_name=pass_name, prompt_text=prompt_text, payload=payload)
+            last_error: Exception | None = None
+            for _attempt in range(self.config.max_retries + 1):
+                try:
+                    raw_text = self._call_ollama(prompt=composed_prompt)
+                    parsed = self._extract_json_object(raw_text)
+                    if not isinstance(parsed, dict):
+                        raise OllamaResponseError("Parsed JSON is not an object.")
+                    return parsed
+                except Exception as exc:  # noqa: BLE001
+                    last_error = exc
+            raise OllamaResponseError(f"Failed to produce valid JSON after retries: {last_error}")
+        except OllamaResponseError as exc:
+            raise ValueError(str(exc)) from exc
 
     def _compose_prompt(self, pass_name: str, prompt_text: str, payload: Dict[str, Any]) -> str:
         return "\n\n".join(
