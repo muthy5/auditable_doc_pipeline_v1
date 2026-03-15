@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "chunk_id": {
+      "type": "string"
+    },
+    "doc_id": {
+      "type": "string"
+    },
+    "index": {
+      "type": "integer"
+    },
+    "heading_path": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "start_char": {
+      "type": "integer"
+    },
+    "end_char": {
+      "type": "integer"
+    },
+    "start_word": {
+      "type": "integer"
+    },
+    "end_word": {
+      "type": "integer"
+    },
+    "overlap_prev_words": {
+      "type": "integer"
+    },
+    "overlap_next_words": {
+      "type": "integer"
+    },
+    "text": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "chunk_id",
+    "doc_id",
+    "index",
+    "start_char",
+    "end_char",
+    "start_word",
+    "end_word",
+    "text"
+  ],
+  "additionalProperties": true
+}

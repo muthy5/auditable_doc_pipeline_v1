@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "doc_id": {
+      "type": "string"
+    },
+    "task": {
+      "type": "object",
+      "properties": {
+        "primary_goal": {
+          "type": "string"
+        },
+        "deliverable_type": {
+          "type": "string"
+        },
+        "domain": {
+          "type": "string"
+        },
+        "audience": {
+          "type": "string"
+        },
+        "jurisdiction": {
+          "type": "string"
+        },
+        "timeframe": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "primary_goal",
+        "deliverable_type",
+        "domain",
+        "audience",
+        "jurisdiction",
+        "timeframe"
+      ]
+    },
+    "questions_to_answer": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "explicit_constraints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "missing_critical_inputs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "blocked": {
+      "type": "boolean"
+    },
+    "blocking_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "doc_id",
+    "task",
+    "questions_to_answer",
+    "explicit_constraints",
+    "missing_critical_inputs",
+    "blocked",
+    "blocking_reason"
+  ],
+  "additionalProperties": true
+}

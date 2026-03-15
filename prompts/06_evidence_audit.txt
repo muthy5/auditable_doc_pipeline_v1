@@ -1,0 +1,10 @@
+Return JSON only.
+
+Task:
+Classify claims as supported, inferred, speculative, or unknown.
+
+Rules:
+- supported = directly grounded in document text or mechanical derivation
+- inferred = reasonable derivation, not directly stated
+- speculative = plausible but weakly grounded
+- unknown = not determinable from available material

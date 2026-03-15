@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "doc_id": {
+      "type": "string"
+    },
+    "explicit_assumptions": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "implicit_assumptions_found": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "assumption_id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "assumption_id",
+          "text"
+        ],
+        "additionalProperties": true
+      }
+    },
+    "scope_errors": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "context_dependencies": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "uncertainty_points": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "uncertainty_id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "uncertainty_id",
+          "text"
+        ],
+        "additionalProperties": true
+      }
+    },
+    "overconfidence_flags": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "blocking_assumptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "assumption_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "assumption_id",
+          "reason"
+        ],
+        "additionalProperties": true
+      }
+    }
+  },
+  "required": [
+    "doc_id",
+    "explicit_assumptions",
+    "implicit_assumptions_found",
+    "scope_errors",
+    "context_dependencies",
+    "uncertainty_points",
+    "overconfidence_flags",
+    "blocking_assumptions"
+  ],
+  "additionalProperties": true
+}

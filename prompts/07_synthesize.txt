@@ -1,0 +1,10 @@
+Return JSON only.
+
+Task:
+Produce the final structured answer.
+
+Rules:
+- Use only upstream artifacts.
+- Every substantive statement must carry support IDs.
+- Do not state unknown or speculative material as settled fact.
+- If blocking gaps exist, do not conclude operational completeness.

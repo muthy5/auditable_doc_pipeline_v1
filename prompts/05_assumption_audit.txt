@@ -1,0 +1,9 @@
+Return JSON only.
+
+Task:
+Identify implicit assumptions, scope errors, context dependencies, uncertainty points, overconfidence flags, and blocking assumptions.
+
+Rules:
+- Distinguish explicit from implicit assumptions.
+- Do not fill gaps.
+- Flag hidden external knowledge dependencies.

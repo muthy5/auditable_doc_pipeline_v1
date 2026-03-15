@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "doc_id": {
+      "type": "string"
+    },
+    "final_answer": {
+      "type": "object",
+      "properties": {
+        "goal": {
+          "type": "string"
+        },
+        "verified_content": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "support": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "text",
+              "support"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "missing_information": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "support": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "text",
+              "support"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "support": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "text",
+              "support"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "assumptions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "support": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "text",
+              "support"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "uncertainties": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "support": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "text",
+              "support"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "organized_structure": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "section": {
+                "type": "string"
+              },
+              "content": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "section",
+              "content"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "bottom_line": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "support": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "text",
+            "support"
+          ],
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "goal",
+        "verified_content",
+        "missing_information",
+        "dependencies",
+        "assumptions",
+        "uncertainties",
+        "organized_structure",
+        "bottom_line"
+      ],
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "doc_id",
+    "final_answer"
+  ],
+  "additionalProperties": true
+}

@@ -1,0 +1,10 @@
+Return JSON only.
+
+Task:
+Extract a structured representation of the chunk.
+
+Rules:
+- Separate explicit facts from claims.
+- Every explicit fact must include a direct quote and source_span.
+- Do not produce final conclusions.
+- Surface missing-information signals if the chunk implies a required step but omits it.

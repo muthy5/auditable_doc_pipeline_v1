@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "doc_id": {
+      "type": "string"
+    },
+    "title": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_path": {
+      "type": "string"
+    },
+    "content_type": {
+      "type": "string"
+    },
+    "encoding": {
+      "type": "string"
+    },
+    "text": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "doc_id",
+    "source_path",
+    "content_type",
+    "encoding",
+    "text",
+    "metadata"
+  ],
+  "additionalProperties": true
+}

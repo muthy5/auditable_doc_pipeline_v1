@@ -1,0 +1,10 @@
+Return JSON only.
+
+Task:
+Normalize the user goal into a constrained task object.
+
+Rules:
+- Do not analyze document content.
+- Do not answer the document question.
+- Do not invent missing inputs.
+- Set blocked=true only when analysis cannot proceed at all.

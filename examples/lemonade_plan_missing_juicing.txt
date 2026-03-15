@@ -1,0 +1,25 @@
+Title: Lemonade Plan
+
+Goal:
+Make fresh lemonade for a summer picnic.
+
+Ingredients:
+- 8 lemons
+- 1 cup sugar
+- 6 cups cold water
+- ice
+
+Expected Output:
+A pitcher of fresh lemonade.
+
+Plan:
+1. Wash the lemons and set them on the counter.
+2. Add the sugar to a pitcher.
+3. Pour in the water.
+4. Stir until the sugar dissolves.
+5. Add ice.
+6. Chill the pitcher for 30 minutes.
+7. Serve the lemonade to guests.
+
+Notes:
+The plan should be simple and easy to follow.

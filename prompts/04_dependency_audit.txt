@@ -1,0 +1,9 @@
+Return JSON only.
+
+Task:
+Identify prerequisites, ordering constraints, dangling references, conflicts, and blocking dependencies.
+
+Rules:
+- Do not add missing steps.
+- Only identify what must exist or occur before something else.
+- Flag blocking dependencies explicitly.

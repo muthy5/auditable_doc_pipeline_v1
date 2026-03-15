@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "doc_id": {
+      "type": "string"
+    },
+    "claim_registry": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "claim_id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "supported",
+              "inferred",
+              "speculative",
+              "unknown"
+            ]
+          },
+          "basis": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "claim_id",
+          "text",
+          "status",
+          "basis",
+          "reason"
+        ],
+        "additionalProperties": true
+      }
+    },
+    "counts": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "doc_id",
+    "claim_registry",
+    "counts"
+  ],
+  "additionalProperties": true
+}

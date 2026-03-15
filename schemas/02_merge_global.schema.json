@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "doc_id": {
+      "type": "string"
+    },
+    "chunks_seen": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "global_entities": {
+      "type": "object"
+    },
+    "global_defined_terms": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "global_undefined_terms": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "all_explicit_facts": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "all_claims": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "all_steps": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "all_dependencies": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "all_inputs_required": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "all_outputs_produced": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "all_missing_information_signals": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "cross_reference_graph": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "term_registry": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "merge_warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "doc_id",
+    "chunks_seen",
+    "global_entities",
+    "global_defined_terms",
+    "global_undefined_terms",
+    "all_explicit_facts",
+    "all_claims",
+    "all_steps",
+    "all_dependencies",
+    "all_inputs_required",
+    "all_outputs_produced",
+    "all_missing_information_signals",
+    "cross_reference_graph",
+    "term_registry",
+    "merge_warnings"
+  ],
+  "additionalProperties": true
+}

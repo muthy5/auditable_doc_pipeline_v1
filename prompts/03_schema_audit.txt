@@ -1,0 +1,9 @@
+Return JSON only.
+
+Task:
+Infer the document type, expected sections, present sections, missing sections, partial sections, and blocking gaps.
+
+Rules:
+- Do not repair the document.
+- A blocking gap means operational completeness cannot be claimed.
+- Preserve uncertainty where appropriate.
