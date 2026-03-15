@@ -92,6 +92,10 @@ Run the example:
 python -m src.cli   --input examples/lemonade_plan_missing_juicing.txt   --runs-dir runs   --backend demo
 ```
 
+To use Ollama instead, set `--backend ollama` and provide `--ollama-model`.
+Optional flags: `--ollama-base-url`, `--ollama-timeout-s`, `--ollama-temperature`,
+`--ollama-num-predict`, and `--ollama-max-retries`.
+
 The command will create a timestamped run directory under `runs/` and write:
 
 ```text
@@ -122,6 +126,21 @@ runs/<RUN_ID>/
 
 ### `demo`
 A rule-based local demo backend. Useful for testing the controller architecture and basic omission detection.
+
+### `ollama`
+A real local model backend via an Ollama server. This backend preserves the same pass sequence,
+schema validation, and run artifact layout as the demo backend.
+
+Example:
+
+```bash
+python -m src.cli \
+  --input examples/lemonade_plan_missing_juicing.txt \
+  --runs-dir runs \
+  --backend ollama \
+  --ollama-model llama3.1:8b-instruct-q4_K_M \
+  --ollama-base-url http://127.0.0.1:11434
+```
 
 ### Future backends
 Replace the demo backend with a real local model backend that implements the interface in `src/llm_interface.py`.
