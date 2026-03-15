@@ -1,1 +1,2 @@
 jsonschema>=4.21.0
+# Ollama backend uses Python stdlib urllib; no extra runtime dependency required.

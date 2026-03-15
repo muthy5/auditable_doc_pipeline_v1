@@ -11,6 +11,12 @@ class PipelineConfig:
     chunk_hard_max_words: int = 1500
     chunk_overlap_max_words: int = 120
     encoding: str = "utf-8"
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = ""
+    ollama_timeout_s: float = 120.0
+    ollama_temperature: float = 0.0
+    ollama_num_predict: int = 2048
+    ollama_max_retries: int = 2
 
 
 @dataclass(frozen=True)

@@ -8,6 +8,7 @@ from typing import Any, Dict
 from .chunker import chunk_document
 from .config import PipelineConfig, RepoPaths
 from .llm_interface import RuleBasedDemoBackend
+from .ollama_backend import OllamaBackendConfig, OllamaLocalBackend
 from .markdown_writer import render_final_answer_markdown
 from .merge_engine import merge_chunk_extractions
 from .pass_runner import PassRunner
@@ -23,9 +24,20 @@ class AuditablePipeline:
     def __init__(self, repo_root: Path, backend_name: str = "demo", config: PipelineConfig | None = None) -> None:
         self.repo_paths = RepoPaths.from_root(repo_root)
         self.config = config or PipelineConfig()
-        if backend_name != "demo":
-            raise ValueError("Only the 'demo' backend is included in this v1 skeleton.")
-        self.backend = RuleBasedDemoBackend()
+        if backend_name == "demo":
+            self.backend = RuleBasedDemoBackend()
+        elif backend_name == "ollama":
+            ollama_config = OllamaBackendConfig(
+                base_url=self.config.ollama_base_url,
+                model=self.config.ollama_model,
+                timeout_s=self.config.ollama_timeout_s,
+                temperature=self.config.ollama_temperature,
+                num_predict=self.config.ollama_num_predict,
+                max_retries=self.config.ollama_max_retries,
+            )
+            self.backend = OllamaLocalBackend(config=ollama_config)
+        else:
+            raise ValueError(f"Unsupported backend: {backend_name}")
         self.pass_runner = PassRunner(
             backend=self.backend,
             prompts_dir=self.repo_paths.prompts_dir,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from .config import PipelineConfig
 from .pipeline import AuditablePipeline
 
 
@@ -10,7 +11,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run the auditable document pipeline.")
     parser.add_argument("--input", required=True, help="Path to the input text document.")
     parser.add_argument("--runs-dir", default="runs", help="Directory where run artifacts will be written.")
-    parser.add_argument("--backend", default="demo", choices=["demo"], help="Backend to use.")
+    parser.add_argument("--backend", default="demo", choices=["demo", "ollama"], help="Backend to use.")
     parser.add_argument("--doc-id", default="doc_001", help="Document ID.")
     parser.add_argument("--title", default=None, help="Optional document title.")
     parser.add_argument(
@@ -18,6 +19,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="Identify missing information and organize the document into an actionable structure.",
         help="User goal passed to normalize_request.",
     )
+    parser.add_argument("--ollama-base-url", default="http://127.0.0.1:11434", help="Ollama base URL.")
+    parser.add_argument("--ollama-model", default="", help="Ollama model name (required when --backend ollama).")
+    parser.add_argument("--ollama-timeout-s", default=120.0, type=float, help="Ollama request timeout in seconds.")
+    parser.add_argument("--ollama-temperature", default=0.0, type=float, help="Sampling temperature for Ollama generation.")
+    parser.add_argument("--ollama-num-predict", default=2048, type=int, help="Maximum tokens to predict per Ollama call.")
+    parser.add_argument("--ollama-max-retries", default=2, type=int, help="Retries for invalid/non-JSON Ollama output.")
     return parser
 
 
@@ -25,8 +32,17 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
+    config = PipelineConfig(
+        ollama_base_url=args.ollama_base_url,
+        ollama_model=args.ollama_model,
+        ollama_timeout_s=args.ollama_timeout_s,
+        ollama_temperature=args.ollama_temperature,
+        ollama_num_predict=args.ollama_num_predict,
+        ollama_max_retries=args.ollama_max_retries,
+    )
+
     repo_root = Path(__file__).resolve().parents[1]
-    pipeline = AuditablePipeline(repo_root=repo_root, backend_name=args.backend)
+    pipeline = AuditablePipeline(repo_root=repo_root, backend_name=args.backend, config=config)
     run_dir = pipeline.run(
         input_path=Path(args.input),
         runs_dir=Path(args.runs_dir),
