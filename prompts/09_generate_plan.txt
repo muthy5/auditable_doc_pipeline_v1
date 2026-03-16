@@ -1,0 +1,13 @@
+Return JSON only.
+
+Task:
+Using all upstream audit artifacts, generate a complete corrected plan that addresses every gap, reorders misordered steps, and adds missing steps.
+
+Rules:
+- Use only information from the document and upstream audit passes.
+- Every added or reordered step must be flagged with its source (original document or inferred from audit).
+- Do not invent facts. If a quantity, time, or cost is not stated or inferable, mark it as "unknown".
+- Include all materials with amounts where stated.
+- Include warnings and safety considerations from the assumption and dependency audits.
+- Include quality checkpoints between major phases.
+- If blocking gaps remain unresolvable, list them explicitly in the blockers section.

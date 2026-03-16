@@ -12,6 +12,7 @@ PASS_OUTPUT_FILES = [
     "05_assumption_audit.json",
     "06_evidence_audit.json",
     "07_synthesize.json",
+    "09_generate_plan.json",
     "08_validate_final.json",
 ]
 
@@ -24,6 +25,7 @@ PASS_SEQUENCE = [
     "05_assumption_audit",
     "06_evidence_audit",
     "07_synthesize",
+    "09_generate_plan",
     "08_validate_final",
 ]
 
@@ -47,6 +49,16 @@ def parse_final_sections(run_dir: Path) -> dict[str, Any]:
         "bottom_line": final_answer.get("bottom_line", {}).get("text", ""),
         "goal": final_answer.get("goal", ""),
     }
+
+
+
+
+def parse_plan_output(run_dir: Path) -> dict[str, Any]:
+    """Parse generated plan JSON for UI rendering."""
+    plan_path = run_dir / "final" / "plan.json"
+    if not plan_path.exists():
+        return {}
+    return _read_json(plan_path).get("plan", {})
 
 
 def collect_pass_outputs(run_dir: Path) -> dict[str, Any]:

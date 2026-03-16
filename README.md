@@ -73,6 +73,7 @@ Each run writes:
 - `report.json`: run metadata, pass status, gap/claim counters, schema failures.
 - `logs/run.log`: run logs.
 - `final/final_answer.json` and `.md`.
+- `final/plan.json` and `final/plan.md` (generated corrected execution plan).
 
 ## Run inspector
 
@@ -92,3 +93,19 @@ streamlit run app.py
 
 The app supports the demo, Ollama, and Claude backends, allows strict mode toggling, and renders run artifacts from the generated run directory.
 
+
+
+## Pipeline pass sequence
+
+1. `00_normalize_request`
+2. `01_extract_chunk`
+3. `02_merge_global`
+4. `03_schema_audit`
+5. `04_dependency_audit`
+6. `05_assumption_audit`
+7. `06_evidence_audit`
+8. `07_synthesize`
+9. `09_generate_plan`
+10. `08_validate_final`
+
+The `09_generate_plan` pass creates a corrected, audit-informed plan with objective, materials/quantities, equipment, prerequisites, ordered steps (with `original`/`added`/`reordered` status), time estimates, warnings, quality checkpoints, blockers, assumptions, cost indicators, and contingencies.

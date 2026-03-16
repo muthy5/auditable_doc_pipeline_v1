@@ -13,6 +13,7 @@ from app_utils import (
     collect_run_report,
     format_item,
     parse_final_sections,
+    parse_plan_output,
     read_final_markdown,
 )
 from src.config import PipelineConfig
@@ -124,34 +125,68 @@ if run_clicked:
                         status_placeholder.success("Pipeline completed successfully")
 
                         sections = parse_final_sections(run_dir)
+                        plan = parse_plan_output(run_dir)
                         pass_outputs = collect_pass_outputs(run_dir)
                         run_report = collect_run_report(run_dir)
                         final_markdown = read_final_markdown(run_dir)
 
                         st.subheader("Results")
+                        summary_tab, plan_tab = st.tabs(["Final Answer", "Generated Plan"])
 
-                        st.markdown("### 🟩 Verified Content")
-                        st.success("\n".join(format_item(item) for item in sections["verified_content"]) or "- None")
+                        with summary_tab:
+                            st.markdown("### 🟩 Verified Content")
+                            st.success("\n".join(format_item(item) for item in sections["verified_content"]) or "- None")
 
-                        st.markdown("### 🟥 Missing Information")
-                        st.error("\n".join(format_item(item) for item in sections["missing_information"]) or "- None")
+                            st.markdown("### 🟥 Missing Information")
+                            st.error("\n".join(format_item(item) for item in sections["missing_information"]) or "- None")
 
-                        st.markdown("### 🟧 Blocking Dependencies")
-                        st.warning("\n".join(format_item(item) for item in sections["dependencies"]) or "- None")
+                            st.markdown("### 🟧 Blocking Dependencies")
+                            st.warning("\n".join(format_item(item) for item in sections["dependencies"]) or "- None")
 
-                        st.markdown("### 🟨 Assumptions")
-                        st.warning("\n".join(format_item(item) for item in sections["assumptions"]) or "- None")
+                            st.markdown("### 🟨 Assumptions")
+                            st.warning("\n".join(format_item(item) for item in sections["assumptions"]) or "- None")
 
-                        st.markdown("### 🟦 Uncertainties")
-                        st.info("\n".join(format_item(item) for item in sections["uncertainties"]) or "- None")
+                            st.markdown("### 🟦 Uncertainties")
+                            st.info("\n".join(format_item(item) for item in sections["uncertainties"]) or "- None")
 
-                        bottom_line = sections["bottom_line"] or "No bottom line generated."
-                        st.markdown("### Bottom Line")
-                        st.markdown(
-                            f"<div style='font-size:1.2rem;padding:1rem;border-left:6px solid #3b82f6;background:#eef6ff;'>"
-                            f"<strong>{bottom_line}</strong></div>",
-                            unsafe_allow_html=True,
-                        )
+                            bottom_line = sections["bottom_line"] or "No bottom line generated."
+                            st.markdown("### Bottom Line")
+                            st.markdown(
+                                f"<div style='font-size:1.2rem;padding:1rem;border-left:6px solid #3b82f6;background:#eef6ff;'>"
+                                f"<strong>{bottom_line}</strong></div>",
+                                unsafe_allow_html=True,
+                            )
+
+                        with plan_tab:
+                            if not plan:
+                                st.info("No generated plan available.")
+                            else:
+                                st.markdown("### Objective")
+                                st.write(plan.get("objective", {}).get("text", ""))
+
+                                st.markdown("### Materials")
+                                st.table(plan.get("materials_and_quantities", []))
+
+                                st.markdown("### Steps")
+                                color_map = {"original": "#16a34a", "added": "#2563eb", "reordered": "#f97316"}
+                                for step in plan.get("steps", []):
+                                    color = color_map.get(step.get("status"), "#64748b")
+                                    st.markdown(
+                                        f"<div style='padding:0.5rem;margin-bottom:0.25rem;border-left:6px solid {color};'>"
+                                        f"<strong>{step.get('step_number', '?')}.</strong> {step.get('text', '')} "
+                                        f"<em>({step.get('status', 'unknown')})</em></div>",
+                                        unsafe_allow_html=True,
+                                    )
+
+                                st.markdown("### Warnings & Safety")
+                                severity_colors = {"critical": "#dc2626", "warning": "#f97316", "info": "#0ea5e9"}
+                                for warning in plan.get("warnings_and_safety", []):
+                                    color = severity_colors.get(warning.get("severity"), "#64748b")
+                                    st.markdown(
+                                        f"<div style='padding:0.5rem;margin-bottom:0.25rem;border-left:6px solid {color};'>"
+                                        f"<strong>{warning.get('severity', 'info').upper()}:</strong> {warning.get('text', '')}</div>",
+                                        unsafe_allow_html=True,
+                                    )
 
                         with st.expander("Raw Pass Outputs"):
                             st.json(pass_outputs)
