@@ -44,6 +44,11 @@ with st.sidebar:
     brave_api_key = ""
     if enable_search:
         brave_api_key = st.text_input("Brave API Key", type="password")
+    st.markdown("---")
+    st.subheader("Reference Documents")
+    reference_dir_input = st.text_input("Reference directory path", value="")
+    uploaded_references = st.file_uploader("Or upload reference files", type=["txt", "md", "pdf", "docx"], accept_multiple_files=True)
+
     user_goal = st.text_area(
         "User goal",
         value="Identify missing information and organize the document into an actionable structure.",
@@ -69,6 +74,15 @@ if run_clicked:
                 input_path = temp_root / uploaded_file.name
                 input_path.write_bytes(uploaded_file.getvalue())
 
+                resolved_reference_dir = reference_dir_input.strip()
+                if uploaded_references:
+                    local_reference_dir = temp_root / "reference_docs"
+                    local_reference_dir.mkdir(parents=True, exist_ok=True)
+                    for uploaded_reference in uploaded_references:
+                        (local_reference_dir / uploaded_reference.name).write_bytes(uploaded_reference.getvalue())
+                    if not resolved_reference_dir:
+                        resolved_reference_dir = str(local_reference_dir)
+
                 config = PipelineConfig(
                     claude_api_key=claude_api_key,
                     claude_model=claude_model,
@@ -76,6 +90,7 @@ if run_clicked:
                     ollama_model=ollama_model,
                     enable_search=enable_search,
                     brave_api_key=brave_api_key,
+                    reference_dir=resolved_reference_dir,
                 )
 
                 pipeline = AuditablePipeline(repo_root=Path(__file__).parent, backend_name=backend, config=config)
@@ -208,6 +223,17 @@ if run_clicked:
                                 st.info("No web search context captured for this run.")
                             else:
                                 st.json(web_context_payload)
+
+                        retrieval_context_path = run_dir / "passes" / "retrieval_context.json"
+                        retrieval_context_payload: dict[str, object] = {}
+                        if retrieval_context_path.exists():
+                            retrieval_context_payload = json.loads(retrieval_context_path.read_text(encoding="utf-8"))
+
+                        with st.expander("Retrieved Reference Context"):
+                            if not retrieval_context_payload.get("reference_context"):
+                                st.info("No local reference context retrieved for this run.")
+                            else:
+                                st.json(retrieval_context_payload)
 
                         with st.expander("Raw Pass Outputs"):
                             st.json(pass_outputs)

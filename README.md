@@ -54,6 +54,7 @@ python -m src --input examples/lemonade_plan_missing_juicing.txt --backend demo 
 - `--quiet`: set logging level to ERROR.
 - `--enable-search`: enable optional Brave web-search enrichment (off by default).
 - `--brave-api-key`: Brave API key (falls back to `BRAVE_API_KEY`).
+- `--reference-dir`: Local folder of `.txt`, `.md`, `.pdf`, and `.docx` files used for retrieval-augmented context.
 
 ## Backends
 
@@ -87,6 +88,26 @@ How it works:
 
 To get a free Brave API key, create an account in the Brave Search API dashboard and generate a subscription token, then pass it via `--brave-api-key` or export `BRAVE_API_KEY`.
 
+
+## Local reference retrieval (RAG)
+
+You can enrich the pipeline with local reference documents:
+
+```bash
+python -m src \
+  --input examples/lemonade_plan_missing_juicing.txt \
+  --backend demo \
+  --reference-dir ./reference_docs
+```
+
+How it works:
+- Loads `.txt`, `.md`, `.pdf`, and `.docx` files from `--reference-dir`.
+- Reuses pipeline chunking logic to split reference documents into chunks.
+- Builds an in-memory TF-IDF index and retrieves top-matching chunks.
+- Injects retrieved context into downstream passes as `reference_context`.
+
+Run artifacts include `passes/retrieval_context.json` when reference context is retrieved.
+
 ## Run outputs
 
 Each run writes:
@@ -113,7 +134,7 @@ Run the Streamlit interface from the repository root:
 streamlit run app.py
 ```
 
-The app supports the demo, Ollama, and Claude backends, allows strict mode toggling, and renders run artifacts from the generated run directory.
+The app supports the demo, Ollama, and Claude backends, allows strict mode toggling, optional web search, optional local reference documents, and renders run artifacts from the generated run directory.
 
 
 

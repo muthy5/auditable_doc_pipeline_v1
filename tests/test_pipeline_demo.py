@@ -22,6 +22,7 @@ def test_demo_pipeline_creates_expected_outputs(tmp_path: Path) -> None:
     assert (run_dir / "final" / "plan.json").exists()
     assert (run_dir / "final" / "plan.md").exists()
     assert not (run_dir / "passes" / "search_web_context.json").exists()
+    assert not (run_dir / "passes" / "retrieval_context.json").exists()
 
 
 def test_dry_run_prints_plan_without_executing(tmp_path: Path) -> None:

@@ -19,6 +19,7 @@ from .merge_engine import merge_chunk_extractions
 from .ollama_backend import OllamaBackendConfig, OllamaLocalBackend
 from .pass_runner import PassRunner
 from .report import write_run_report
+from .retriever import LocalFileRetriever
 from .schemas import load_schema
 from .validators import validate_chunks, validate_final_output
 
@@ -126,6 +127,53 @@ class AuditablePipeline:
             LOGGER.warning("Web search enrichment skipped due to error: %s", exc)
             return []
 
+
+    def _generate_retrieval_queries(self, normalize: dict[str, Any], user_goal: str) -> list[str]:
+        """Create retrieval queries from normalized task details."""
+        task = normalize.get("task", {}) if isinstance(normalize, dict) else {}
+        queries: list[str] = []
+        for key in ["primary_goal", "deliverable_type", "domain", "audience", "jurisdiction", "timeframe"]:
+            value = task.get(key) if isinstance(task, dict) else None
+            if isinstance(value, str) and value.strip():
+                queries.append(value.strip())
+        for question in normalize.get("questions_to_answer", []):
+            if isinstance(question, str) and question.strip():
+                queries.append(question.strip())
+        if user_goal.strip():
+            queries.append(user_goal.strip())
+
+        unique_queries: list[str] = []
+        seen: set[str] = set()
+        for query in queries:
+            if query not in seen:
+                seen.add(query)
+                unique_queries.append(query)
+        return unique_queries[:8]
+
+    def _build_reference_context(self, normalize: dict[str, Any], user_goal: str) -> list[dict[str, Any]]:
+        """Retrieve local context chunks when a reference directory is configured."""
+        if not self.config.reference_dir:
+            return []
+        retriever = LocalFileRetriever(
+            self.config.reference_dir,
+            chunk_target_min_words=self.config.chunk_target_min_words,
+            chunk_target_max_words=self.config.chunk_target_max_words,
+            chunk_hard_max_words=self.config.chunk_hard_max_words,
+            chunk_overlap_max_words=self.config.chunk_overlap_max_words,
+        )
+        aggregated: list[dict[str, Any]] = []
+        for query in self._generate_retrieval_queries(normalize, user_goal):
+            for item in retriever.retrieve(query, top_k=5):
+                aggregated.append({"query": query, **item})
+
+        deduped: dict[tuple[str, str], dict[str, Any]] = {}
+        for item in aggregated:
+            key = (item["source_file"], item["text"])
+            prev = deduped.get(key)
+            if prev is None or item["similarity_score"] > prev["similarity_score"]:
+                deduped[key] = item
+        return sorted(deduped.values(), key=lambda x: x["similarity_score"], reverse=True)[:20]
+
     def run(
         self,
         input_path: Path,
@@ -211,6 +259,15 @@ class AuditablePipeline:
                 if web_context:
                     web_context_output.write_text(json.dumps({"web_context": web_context}, indent=2, ensure_ascii=False), encoding="utf-8")
 
+            reference_context: list[dict[str, Any]] = []
+            retrieval_context_output = passes_dir / "retrieval_context.json"
+            if resume and retrieval_context_output.exists():
+                reference_context = json.loads(retrieval_context_output.read_text(encoding="utf-8")).get("reference_context", [])
+            else:
+                reference_context = self._build_reference_context(normalize=normalize, user_goal=user_goal)
+                if reference_context:
+                    retrieval_context_output.write_text(json.dumps({"reference_context": reference_context}, indent=2, ensure_ascii=False), encoding="utf-8")
+
             extraction_dir = passes_dir / "01_extract_chunk"
             extraction_dir.mkdir(parents=True, exist_ok=True)
             chunk_extractions: list[dict[str, Any]] = []
@@ -220,7 +277,7 @@ class AuditablePipeline:
                     extraction = json.loads(out.read_text())
                 else:
                     LOGGER.info("Starting pass 01_extract_chunk for %s", chunk["chunk_id"])
-                    extraction = self.pass_runner.run_model_pass("01_extract_chunk", "01_extract_chunk.txt", "01_extract_chunk.schema.json", {"task": normalize, "chunk": chunk, "web_context": web_context}, out, strict)
+                    extraction = self.pass_runner.run_model_pass("01_extract_chunk", "01_extract_chunk.txt", "01_extract_chunk.schema.json", {"task": normalize, "chunk": chunk, "web_context": web_context, "reference_context": reference_context}, out, strict)
                 chunk_extractions.append(extraction)
 
             merge = merge_chunk_extractions(doc_id, chunk_extractions)
@@ -237,12 +294,12 @@ class AuditablePipeline:
                 LOGGER.info("Starting pass %s", pass_name)
                 return self.pass_runner.run_model_pass(pass_name, prompt, schema, payload, output_path, strict)
 
-            schema_audit = run_or_load("03_schema_audit", "03_schema_audit.txt", "03_schema_audit.schema.json", {"task": normalize, "merge": merge, "chunk_summaries": chunk_summaries, "web_context": web_context})
-            dependency_audit = run_or_load("04_dependency_audit", "04_dependency_audit.txt", "04_dependency_audit.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "web_context": web_context})
-            assumption_audit = run_or_load("05_assumption_audit", "05_assumption_audit.txt", "05_assumption_audit.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "web_context": web_context})
-            evidence_audit = run_or_load("06_evidence_audit", "06_evidence_audit.txt", "06_evidence_audit.schema.json", {"merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "web_context": web_context})
-            synthesis = run_or_load("07_synthesize", "07_synthesize.txt", "07_synthesize.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "evidence_audit": evidence_audit, "web_context": web_context})
-            plan = run_or_load("09_generate_plan", "09_generate_plan.txt", "09_generate_plan.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "evidence_audit": evidence_audit, "synthesis": synthesis, "web_context": web_context})
+            schema_audit = run_or_load("03_schema_audit", "03_schema_audit.txt", "03_schema_audit.schema.json", {"task": normalize, "merge": merge, "chunk_summaries": chunk_summaries, "web_context": web_context, "reference_context": reference_context})
+            dependency_audit = run_or_load("04_dependency_audit", "04_dependency_audit.txt", "04_dependency_audit.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "web_context": web_context, "reference_context": reference_context})
+            assumption_audit = run_or_load("05_assumption_audit", "05_assumption_audit.txt", "05_assumption_audit.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "web_context": web_context, "reference_context": reference_context})
+            evidence_audit = run_or_load("06_evidence_audit", "06_evidence_audit.txt", "06_evidence_audit.schema.json", {"merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "web_context": web_context, "reference_context": reference_context})
+            synthesis = run_or_load("07_synthesize", "07_synthesize.txt", "07_synthesize.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "evidence_audit": evidence_audit, "web_context": web_context, "reference_context": reference_context})
+            plan = run_or_load("09_generate_plan", "09_generate_plan.txt", "09_generate_plan.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "evidence_audit": evidence_audit, "synthesis": synthesis, "web_context": web_context, "reference_context": reference_context})
 
             validation = validate_final_output(synthesis, normalize, schema_audit, dependency_audit, assumption_audit, evidence_audit, load_schema(self.repo_paths.schemas_dir, "07_synthesize.schema.json"))
             if not (resume and has_output("08_validate_final")):

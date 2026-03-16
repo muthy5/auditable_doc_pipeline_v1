@@ -21,6 +21,7 @@ class PipelineConfig:
     claude_model: str = "claude-sonnet-4-20250514"
     brave_api_key: str = ""
     enable_search: bool = False
+    reference_dir: str = ""
 
 
 @dataclass(frozen=True)
