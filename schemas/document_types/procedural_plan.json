@@ -1,0 +1,11 @@
+{
+  "document_type": "procedural_plan",
+  "expected_sections": [
+    "objective",
+    "materials",
+    "ingredient_preparation",
+    "process_steps",
+    "outputs",
+    "validation_criteria"
+  ]
+}

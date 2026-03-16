@@ -28,6 +28,7 @@ class RuleBasedDemoBackend(LocalLLMBackend):
         dispatch = {
             "00_normalize_request": self._normalize_request,
             "01_extract_chunk": self._extract_chunk,
+            "classify_document": self._classify_document,
             "03_schema_audit": self._schema_audit,
             "04_dependency_audit": self._dependency_audit,
             "05_assumption_audit": self._assumption_audit,
@@ -64,6 +65,37 @@ class RuleBasedDemoBackend(LocalLLMBackend):
             "blocked": False,
             "blocking_reason": None,
         }
+
+
+    def _classify_document(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        text = payload.get("text", "")
+        lower_text = text.lower()
+
+        heuristics = [
+            ("legal_contract", ["contract", "agreement", "governing law", "termination", "parties"]),
+            ("project_proposal", ["proposal", "problem statement", "deliverables", "success metrics", "scope"]),
+            ("medical_protocol", ["protocol", "dosing", "contraindications", "adverse events", "patient"]),
+            ("technical_spec", ["technical specification", "architecture", "interfaces", "requirements", "data model"]),
+            ("business_plan", ["business plan", "executive summary", "market analysis", "financial projections", "marketing strategy"]),
+            ("procedural_plan", ["steps", "ingredients", "materials", "expected output", "procedure"]),
+        ]
+
+        best_type = "procedural_plan"
+        best_score = 0
+        for doc_type, keywords in heuristics:
+            score = sum(1 for keyword in keywords if keyword in lower_text)
+            if score > best_score:
+                best_type = doc_type
+                best_score = score
+
+        confidence = "low"
+        if best_score >= 3:
+            confidence = "high"
+        elif best_score >= 1:
+            confidence = "medium"
+
+        reason = f"Matched {best_score} keyword signals for {best_type}."
+        return {"document_type": best_type, "confidence": confidence, "reason": reason}
 
     def _extract_chunk(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         chunk = payload["chunk"]
@@ -170,41 +202,79 @@ class RuleBasedDemoBackend(LocalLLMBackend):
         outputs = [o.lower() for o in merge.get("all_outputs_produced", [])]
         all_steps_text = " ".join(step["text"].lower() for step in merge.get("all_steps", []))
 
-        document_type = "procedural_plan"
-        expected_sections = [
-            "objective",
-            "materials",
-            "ingredient_preparation",
-            "process_steps",
-            "outputs",
-            "validation_criteria",
-        ]
-        present_sections = []
+        template = payload.get("document_type_schema", {})
+        document_type = template.get("document_type", payload.get("document_type", "procedural_plan"))
+        expected_sections = template.get("expected_sections", [])
+        present_sections: list[str] = []
         partial_sections = []
         missing_sections = []
         blocking_gaps = []
         nonblocking_gaps = []
 
-        chunk_roles = {entry["section_role"] for entry in payload.get("chunk_summaries", [])}
-        if "objective" in chunk_roles:
-            present_sections.append("objective")
-        if any(materials):
-            present_sections.append("materials")
-        if merge.get("all_steps"):
-            present_sections.append("process_steps")
-        if outputs:
-            present_sections.append("outputs")
+        evidence_text = " ".join(
+            materials
+            + outputs
+            + [step["text"].lower() for step in merge.get("all_steps", [])]
+            + [fact.get("text", "").lower() for fact in merge.get("all_explicit_facts", [])]
+        )
 
-        if any("lemon" in item for item in materials) and any("lemonade" in item for item in outputs):
-            if any(keyword in all_steps_text for keyword in ["juice", "squeez", "press", "extract"]):
-                present_sections.append("ingredient_preparation")
+        section_hints = {
+            "executive summary": ["executive summary", "summary"],
+            "market analysis": ["market", "competitor", "segment"],
+            "financial projections": ["financial", "revenue", "profit", "projection"],
+            "operations plan": ["operations", "process", "workflow"],
+            "marketing strategy": ["marketing", "go-to-market", "channel"],
+            "team": ["team", "roles", "staff"],
+            "timeline": ["timeline", "milestone", "schedule"],
+            "risks": ["risk", "mitigation"],
+            "parties": ["party", "parties"],
+            "definitions": ["definition", "defined term"],
+            "terms": ["term", "duration"],
+            "obligations": ["obligation", "shall"],
+            "payment": ["payment", "fee", "invoice"],
+            "termination": ["termination", "terminate"],
+            "dispute resolution": ["dispute", "arbitration"],
+            "governing law": ["governing law", "jurisdiction"],
+            "signatures": ["signature", "signed"],
+            "problem statement": ["problem", "challenge"],
+            "proposed solution": ["solution", "approach"],
+            "scope": ["scope", "in scope", "out of scope"],
+            "deliverables": ["deliverable", "outcome"],
+            "budget": ["budget", "cost"],
+            "success metrics": ["kpi", "metric", "success"],
+            "indication": ["indication", "condition"],
+            "patient selection": ["patient", "eligibility"],
+            "procedure steps": ["procedure", "step"],
+            "dosing": ["dose", "dosing"],
+            "monitoring": ["monitoring", "observe"],
+            "adverse events": ["adverse event", "side effect"],
+            "contraindications": ["contraindication", "do not use"],
+            "follow-up": ["follow-up", "follow up"],
+            "overview": ["overview", "introduction"],
+            "requirements": ["requirement", "must"],
+            "architecture": ["architecture", "component"],
+            "interfaces": ["api", "interface"],
+            "data model": ["data model", "schema"],
+            "security": ["security", "auth", "encryption"],
+            "testing": ["test", "validation"],
+            "deployment": ["deploy", "release"],
+            "objective": ["objective", "goal"],
+            "materials": ["materials", "ingredients"],
+            "ingredient_preparation": ["juice", "squeez", "extract", "prep"],
+            "process_steps": ["step", "instructions"],
+            "outputs": ["output", "result"],
+            "validation_criteria": ["criteria", "quality", "done"],
+        }
+
+        for section in expected_sections:
+            hints = section_hints.get(section, [section])
+            if any(hint in evidence_text for hint in hints):
+                present_sections.append(section)
             else:
-                missing_sections.append(
-                    {
-                        "section": "ingredient_preparation",
-                        "reason": "Whole lemons are present, but no extraction step appears.",
-                    }
-                )
+                missing_sections.append({"section": section, "reason": f"No evidence found for section '{section}'."})
+
+        if document_type == "procedural_plan" and any("lemon" in item for item in materials) and any("lemonade" in item for item in outputs):
+            if not any(keyword in all_steps_text for keyword in ["juice", "squeez", "press", "extract"]):
                 blocking_gaps.append(
                     {
                         "gap_id": "gap_schema_001",
@@ -213,7 +283,7 @@ class RuleBasedDemoBackend(LocalLLMBackend):
                     }
                 )
 
-        if "validation_criteria" not in present_sections:
+        if document_type == "procedural_plan" and "validation_criteria" not in present_sections:
             nonblocking_gaps.append(
                 {
                     "gap_id": "gap_schema_002",

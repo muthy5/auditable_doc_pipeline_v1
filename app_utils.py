@@ -6,6 +6,7 @@ from typing import Any
 
 PASS_OUTPUT_FILES = [
     "00_normalize_request.json",
+    "classify_document.json",
     "02_merge_global.json",
     "03_schema_audit.json",
     "04_dependency_audit.json",

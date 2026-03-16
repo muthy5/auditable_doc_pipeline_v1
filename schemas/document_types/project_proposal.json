@@ -1,0 +1,14 @@
+{
+  "document_type": "project_proposal",
+  "expected_sections": [
+    "problem statement",
+    "proposed solution",
+    "scope",
+    "deliverables",
+    "timeline",
+    "budget",
+    "team",
+    "risks",
+    "success metrics"
+  ]
+}

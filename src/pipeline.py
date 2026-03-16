@@ -11,6 +11,7 @@ from .claude_backend import ClaudeAPIBackend, ClaudeBackendConfig
 from .chunker import chunk_document
 from .config import PipelineConfig, RepoPaths
 from .exceptions import PipelineError
+from .document_classifier import DEFAULT_DOCUMENT_TYPE, SUPPORTED_DOCUMENT_TYPES, classify_document_with_metadata
 from .llm_interface import RuleBasedDemoBackend
 from .markdown_writer import render_final_answer_markdown, render_plan_markdown
 from .prompts import load_prompt
@@ -92,6 +93,14 @@ class AuditablePipeline:
             missing.append(str(repo_paths.prompts_dir / "search_queries.txt"))
         if not (repo_paths.schemas_dir / "search_queries.schema.json").exists():
             missing.append(str(repo_paths.schemas_dir / "search_queries.schema.json"))
+        if not (repo_paths.prompts_dir / "classify_document.txt").exists():
+            missing.append(str(repo_paths.prompts_dir / "classify_document.txt"))
+        if not (repo_paths.schemas_dir / "classify_document.schema.json").exists():
+            missing.append(str(repo_paths.schemas_dir / "classify_document.schema.json"))
+        for document_type in SUPPORTED_DOCUMENT_TYPES:
+            template_path = repo_paths.schemas_dir / "document_types" / f"{document_type}.json"
+            if not template_path.exists():
+                missing.append(str(template_path))
         if missing:
             raise PipelineError("Missing required files:\n" + "\n".join(missing))
 
@@ -185,6 +194,7 @@ class AuditablePipeline:
         strict: bool = False,
         run_dir: Path | None = None,
         resume: bool = False,
+        document_type: str = "auto",
     ) -> Path:
         """Execute the full pipeline and return the run directory."""
         self.pass_runner.validation_failures.clear()
@@ -224,6 +234,7 @@ class AuditablePipeline:
                     "00_normalize_request": passes_dir / "00_normalize_request.json",
                     "01_extract_chunk": passes_dir / "01_extract_chunk",
                     "02_merge_global": passes_dir / "02_merge_global.json",
+                    "classify_document": passes_dir / "classify_document.json",
                     "03_schema_audit": passes_dir / "03_schema_audit.json",
                     "04_dependency_audit": passes_dir / "04_dependency_audit.json",
                     "05_assumption_audit": passes_dir / "05_assumption_audit.json",
@@ -249,6 +260,39 @@ class AuditablePipeline:
             else:
                 LOGGER.info("Starting pass 00_normalize_request")
                 normalize = self.pass_runner.run_model_pass("00_normalize_request", "00_normalize_request.txt", "00_normalize_request.schema.json", normalize_input, passes_dir / "00_normalize_request.json", strict)
+
+            classification_output_path = passes_dir / "classify_document.json"
+            if document_type == "auto":
+                if resume and has_output("classify_document"):
+                    classification = json.loads(classification_output_path.read_text())
+                    selected_document_type = classification.get("selected_document_type", classification.get("document_type", DEFAULT_DOCUMENT_TYPE))
+                else:
+                    LOGGER.info("Starting pass classify_document")
+                    classification = classify_document_with_metadata(text, self.backend)
+                    self.pass_runner.validate_with_schema("classify_document.schema.json", {
+                        "document_type": classification["document_type"],
+                        "confidence": classification["confidence"],
+                        "reason": classification["reason"],
+                    })
+                    selected_document_type = str(classification.get("selected_document_type", DEFAULT_DOCUMENT_TYPE))
+                    classification_output_path.write_text(json.dumps(classification, indent=2), encoding="utf-8")
+            else:
+                if document_type not in SUPPORTED_DOCUMENT_TYPES:
+                    raise PipelineError(f"Unsupported document type '{document_type}'. Supported: {sorted(SUPPORTED_DOCUMENT_TYPES)}")
+                selected_document_type = document_type
+                classification = {
+                    "document_type": document_type,
+                    "confidence": "high",
+                    "reason": "User-specified document type.",
+                    "selected_document_type": document_type,
+                }
+                if not (resume and classification_output_path.exists()):
+                    classification_output_path.write_text(json.dumps(classification, indent=2), encoding="utf-8")
+
+            document_type_schema = load_schema(
+                self.repo_paths.schemas_dir / "document_types",
+                f"{selected_document_type}.json",
+            )
 
             web_context: list[dict[str, Any]] = []
             web_context_output = passes_dir / "search_web_context.json"
@@ -294,7 +338,7 @@ class AuditablePipeline:
                 LOGGER.info("Starting pass %s", pass_name)
                 return self.pass_runner.run_model_pass(pass_name, prompt, schema, payload, output_path, strict)
 
-            schema_audit = run_or_load("03_schema_audit", "03_schema_audit.txt", "03_schema_audit.schema.json", {"task": normalize, "merge": merge, "chunk_summaries": chunk_summaries, "web_context": web_context, "reference_context": reference_context})
+            schema_audit = run_or_load("03_schema_audit", "03_schema_audit.txt", "03_schema_audit.schema.json", {"task": normalize, "merge": merge, "chunk_summaries": chunk_summaries, "document_type": selected_document_type, "document_type_schema": document_type_schema, "web_context": web_context, "reference_context": reference_context})
             dependency_audit = run_or_load("04_dependency_audit", "04_dependency_audit.txt", "04_dependency_audit.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "web_context": web_context, "reference_context": reference_context})
             assumption_audit = run_or_load("05_assumption_audit", "05_assumption_audit.txt", "05_assumption_audit.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "web_context": web_context, "reference_context": reference_context})
             evidence_audit = run_or_load("06_evidence_audit", "06_evidence_audit.txt", "06_evidence_audit.schema.json", {"merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "web_context": web_context, "reference_context": reference_context})
@@ -325,6 +369,7 @@ class AuditablePipeline:
                     "blocking_gap_count": len(schema_audit.get("blocking_gaps", [])),
                     "unsupported_claim_count": len([e for e in validation.get("errors", []) if e.get("code") == "E_SYNTH_UNSUPPORTED_CLAIM"]),
                     "schema_validation_failure_list": self.pass_runner.validation_failures,
+                    "document_type": selected_document_type,
                 },
             )
             return run_dir

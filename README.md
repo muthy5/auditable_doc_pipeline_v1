@@ -45,6 +45,26 @@ make test
 python -m src --input examples/lemonade_plan_missing_juicing.txt --backend demo --runs-dir runs
 ```
 
+## Supported document types
+
+The pipeline now supports schema-auditing against multiple document templates:
+
+- `procedural_plan` (default fallback)
+- `business_plan`
+- `legal_contract`
+- `project_proposal`
+- `medical_protocol`
+- `technical_spec`
+
+Use CLI `--document-type auto` (default) to classify automatically, or set an explicit type.
+
+To add a new type:
+
+1. Add `schemas/document_types/<new_type>.json` with `document_type` and `expected_sections`.
+2. Add the new type to `src/document_classifier.py` (`SUPPORTED_DOCUMENT_TYPES`).
+3. Update `prompts/classify_document.txt` and `schemas/classify_document.schema.json` allowed values.
+4. Add backend heuristics in `src/llm_interface.py` for the demo backend.
+
 ## CLI features
 
 - `--strict`: stop on first schema-validation failure.
@@ -55,6 +75,7 @@ python -m src --input examples/lemonade_plan_missing_juicing.txt --backend demo 
 - `--enable-search`: enable optional Brave web-search enrichment (off by default).
 - `--brave-api-key`: Brave API key (falls back to `BRAVE_API_KEY`).
 - `--reference-dir`: Local folder of `.txt`, `.md`, `.pdf`, and `.docx` files used for retrieval-augmented context.
+- `--document-type`: Use `auto` (default) or force a specific supported document type.
 
 ## Backends
 

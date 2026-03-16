@@ -1,0 +1,15 @@
+Return JSON only.
+
+Task:
+Classify the provided document into one of these document types:
+- business_plan
+- legal_contract
+- project_proposal
+- medical_protocol
+- technical_spec
+- procedural_plan
+
+Rules:
+- Choose the best matching type based on document intent and section patterns.
+- If uncertain, set "confidence" to "low" and explain briefly.
+- Do not output any type outside the allowed list.
