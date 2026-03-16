@@ -81,3 +81,14 @@ python -m src.run_inspector --run-dir runs/<RUN_ID>
 ```
 
 Prints pass status, blocking gaps, timing, and final-answer preview.
+
+## Web Interface
+
+Run the Streamlit interface from the repository root:
+
+```bash
+streamlit run app.py
+```
+
+The app supports the demo, Ollama, and Claude backends, allows strict mode toggling, and renders run artifacts from the generated run directory.
+
