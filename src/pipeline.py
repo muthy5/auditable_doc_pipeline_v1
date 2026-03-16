@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .claude_backend import ClaudeAPIBackend, ClaudeBackendConfig
 from .chunker import chunk_document
@@ -189,6 +190,28 @@ class AuditablePipeline:
                 deduped[key] = item
         return sorted(deduped.values(), key=lambda x: x["similarity_score"], reverse=True)[:20]
 
+    def _resolve_chunk_settings(self, fast: bool = False) -> tuple[int, int, int]:
+        """Return backend-aware chunk sizing settings."""
+        if self.backend_name == "claude":
+            if fast:
+                return (3500, 5500, 7000)
+            return (3000, 5000, 6000)
+        if fast:
+            return (
+                max(self.config.chunk_target_min_words, 2000),
+                max(self.config.chunk_target_max_words, 3000),
+                max(self.config.chunk_hard_max_words, 4000),
+            )
+        return (
+            self.config.chunk_target_min_words,
+            self.config.chunk_target_max_words,
+            self.config.chunk_hard_max_words,
+        )
+
+    def _default_parallel_chunks(self) -> int:
+        """Return backend-aware default for chunk parallelism."""
+        return 4 if self.backend_name == "claude" else 1
+
     def run(
         self,
         input_path: Path,
@@ -201,6 +224,9 @@ class AuditablePipeline:
         run_dir: Path | None = None,
         resume: bool = False,
         document_type: str = "auto",
+        parallel_chunks: int | None = None,
+        fast: bool = False,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> Path:
         """Execute the full pipeline and return the run directory."""
         self.pass_runner.validation_failures.clear()
@@ -230,9 +256,24 @@ class AuditablePipeline:
             self.pass_runner.validate_with_schema("document.schema.json", document)
             (input_dir / "document.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
 
-            chunks = chunk_document(document, self.config.chunk_target_min_words, self.config.chunk_target_max_words, self.config.chunk_hard_max_words, self.config.chunk_overlap_max_words)
+            chunk_target_min_words, chunk_target_max_words, chunk_hard_max_words = self._resolve_chunk_settings(fast=fast)
+            chunks = chunk_document(
+                document,
+                chunk_target_min_words,
+                chunk_target_max_words,
+                chunk_hard_max_words,
+                self.config.chunk_overlap_max_words,
+            )
             if errors := validate_chunks(chunks):
                 raise PipelineError(f"Chunk validation failed: {errors}")
+            total_words = len(text.split())
+            avg_words_per_chunk = (sum(len(chunk.get("text", "").split()) for chunk in chunks) / len(chunks)) if chunks else 0.0
+            LOGGER.info(
+                "Chunking stats: chunks=%d avg_words_per_chunk=%.1f total_words=%d",
+                len(chunks),
+                avg_words_per_chunk,
+                total_words,
+            )
             (input_dir / "chunks.json").write_text(json.dumps(chunks, indent=2), encoding="utf-8")
 
             def has_output(pass_name: str) -> bool:
@@ -320,22 +361,48 @@ class AuditablePipeline:
 
             extraction_dir = passes_dir / "01_extract_chunk"
             extraction_dir.mkdir(parents=True, exist_ok=True)
-            chunk_extractions: list[dict[str, Any]] = []
-            for chunk in chunks:
-                out = extraction_dir / f"{chunk['chunk_id']}.json"
-                if resume and out.exists():
-                    extraction = json.loads(out.read_text())
-                else:
-                    LOGGER.info("Starting pass 01_extract_chunk for %s", chunk["chunk_id"])
-                    extraction = self.pass_runner.run_model_pass("01_extract_chunk", "01_extract_chunk.txt", "01_extract_chunk.schema.json", {"task": normalize, "chunk": chunk, "web_context": web_context, "reference_context": reference_context}, out, strict)
-                chunk_extractions.append(extraction)
+            total_chunks = len(chunks)
+            chunk_extractions: list[dict[str, Any] | None] = [None] * total_chunks
+            effective_parallel_chunks = max(1, parallel_chunks if parallel_chunks is not None else self._default_parallel_chunks())
+            if fast and parallel_chunks is None:
+                effective_parallel_chunks = max(effective_parallel_chunks, self._default_parallel_chunks())
 
-            merge = merge_chunk_extractions(doc_id, chunk_extractions)
+            def _process_chunk(index: int, chunk: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+                out = extraction_dir / f"{chunk['chunk_id']}.json"
+                LOGGER.info("Processing chunk %d of %d (%s)", index + 1, total_chunks, chunk["chunk_id"])
+                if progress_callback:
+                    progress_callback(index + 1, total_chunks)
+                if resume and out.exists():
+                    return index, json.loads(out.read_text())
+                extraction = self.pass_runner.run_model_pass(
+                    "01_extract_chunk",
+                    "01_extract_chunk.txt",
+                    "01_extract_chunk.schema.json",
+                    {"task": normalize, "chunk": chunk, "web_context": web_context, "reference_context": reference_context},
+                    out,
+                    strict,
+                )
+                return index, extraction
+
+            if effective_parallel_chunks == 1:
+                for idx, chunk in enumerate(chunks):
+                    chunk_index, extraction = _process_chunk(idx, chunk)
+                    chunk_extractions[chunk_index] = extraction
+            else:
+                with ThreadPoolExecutor(max_workers=effective_parallel_chunks) as executor:
+                    futures = [executor.submit(_process_chunk, idx, chunk) for idx, chunk in enumerate(chunks)]
+                    for future in as_completed(futures):
+                        chunk_index, extraction = future.result()
+                        chunk_extractions[chunk_index] = extraction
+
+            ordered_chunk_extractions: list[dict[str, Any]] = [item for item in chunk_extractions if item is not None]
+
+            merge = merge_chunk_extractions(doc_id, ordered_chunk_extractions)
             if not (resume and has_output("02_merge_global")):
                 LOGGER.info("Starting pass 02_merge_global")
                 self.pass_runner.write_validated_json("02_merge_global.schema.json", merge, passes_dir / "02_merge_global.json", "02_merge_global", strict)
 
-            chunk_summaries = [{"chunk_id": item["chunk_id"], "section_role": item["section_role"]} for item in chunk_extractions]
+            chunk_summaries = [{"chunk_id": item["chunk_id"], "section_role": item["section_role"]} for item in ordered_chunk_extractions]
 
             def run_or_load(pass_name: str, prompt: str, schema: str, payload: dict[str, Any]) -> dict[str, Any]:
                 output_path = passes_dir / f"{pass_name}.json"
@@ -346,8 +413,13 @@ class AuditablePipeline:
 
             schema_audit = run_or_load("03_schema_audit", "03_schema_audit.txt", "03_schema_audit.schema.json", {"task": normalize, "merge": merge, "chunk_summaries": chunk_summaries, "document_type": selected_document_type, "document_type_schema": document_type_schema, "web_context": web_context, "reference_context": reference_context})
             dependency_audit = run_or_load("04_dependency_audit", "04_dependency_audit.txt", "04_dependency_audit.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "web_context": web_context, "reference_context": reference_context})
-            assumption_audit = run_or_load("05_assumption_audit", "05_assumption_audit.txt", "05_assumption_audit.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "web_context": web_context, "reference_context": reference_context})
-            evidence_audit = run_or_load("06_evidence_audit", "06_evidence_audit.txt", "06_evidence_audit.schema.json", {"merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "web_context": web_context, "reference_context": reference_context})
+            if fast:
+                LOGGER.info("Fast mode enabled: skipping passes 05_assumption_audit and 06_evidence_audit")
+                assumption_audit = {"implicit_assumptions_found": [], "uncertainty_points": [], "blocking_assumptions": []}
+                evidence_audit = {"claim_registry": []}
+            else:
+                assumption_audit = run_or_load("05_assumption_audit", "05_assumption_audit.txt", "05_assumption_audit.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "web_context": web_context, "reference_context": reference_context})
+                evidence_audit = run_or_load("06_evidence_audit", "06_evidence_audit.txt", "06_evidence_audit.schema.json", {"merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "web_context": web_context, "reference_context": reference_context})
             synthesis = run_or_load("07_synthesize", "07_synthesize.txt", "07_synthesize.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "evidence_audit": evidence_audit, "web_context": web_context, "reference_context": reference_context})
             plan = run_or_load("09_generate_plan", "09_generate_plan.txt", "09_generate_plan.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "evidence_audit": evidence_audit, "synthesis": synthesis, "web_context": web_context, "reference_context": reference_context})
 
