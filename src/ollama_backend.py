@@ -6,11 +6,14 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Dict
 
+from .exceptions import BackendError
 from .llm_interface import LocalLLMBackend
 
 
 @dataclass(frozen=True)
 class OllamaBackendConfig:
+    """Configuration for the Ollama backend client."""
+
     base_url: str = "http://127.0.0.1:11434"
     model: str = ""
     timeout_s: float = 120.0
@@ -19,14 +22,24 @@ class OllamaBackendConfig:
     max_retries: int = 2
 
 
-class OllamaResponseError(RuntimeError):
-    pass
+class OllamaResponseError(BackendError):
+    """Raised when Ollama returns unusable output."""
 
 
 class OllamaLocalBackend(LocalLLMBackend):
+    """Local LLM backend that calls an Ollama server."""
+
     def __init__(self, config: OllamaBackendConfig) -> None:
+        """Initialize backend with connection config.
+
+        Args:
+            config: Ollama backend settings.
+
+        Raises:
+            BackendError: If required configuration is missing.
+        """
         if not config.model.strip():
-            raise ValueError("Ollama model name must be provided.")
+            raise BackendError("Ollama model name must be provided.")
         self.config = config
 
     def generate_json(
@@ -36,23 +49,34 @@ class OllamaLocalBackend(LocalLLMBackend):
         payload: Dict[str, Any],
         schema: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
-        try:
-            composed_prompt = self._compose_prompt(
-                pass_name=pass_name, prompt_text=prompt_text, payload=payload, schema=schema
-            )
-            last_error: Exception | None = None
-            for _attempt in range(self.config.max_retries + 1):
-                try:
-                    raw_text = self._call_ollama(prompt=composed_prompt)
-                    parsed = self._extract_json_object(raw_text)
-                    if not isinstance(parsed, dict):
-                        raise OllamaResponseError("Parsed JSON is not an object.")
-                    return parsed
-                except Exception as exc:  # noqa: BLE001
-                    last_error = exc
-            raise OllamaResponseError(f"Failed to produce valid JSON after retries: {last_error}")
-        except OllamaResponseError as exc:
-            raise ValueError(str(exc)) from exc
+        """Generate a JSON object for a pass.
+
+        Args:
+            pass_name: Name of pass being executed.
+            prompt_text: Prompt instructions for the pass.
+            payload: JSON payload input.
+            schema: Optional output schema guidance.
+
+        Returns:
+            Parsed JSON object produced by the model.
+
+        Raises:
+            BackendError: If generation repeatedly fails.
+        """
+        composed_prompt = self._compose_prompt(
+            pass_name=pass_name, prompt_text=prompt_text, payload=payload, schema=schema
+        )
+        last_error: Exception | None = None
+        for _attempt in range(self.config.max_retries + 1):
+            try:
+                raw_text = self._call_ollama(prompt=composed_prompt)
+                parsed = self._extract_json_object(raw_text)
+                if not isinstance(parsed, dict):
+                    raise OllamaResponseError("Parsed JSON is not an object.")
+                return parsed
+            except OllamaResponseError as exc:
+                last_error = exc
+        raise BackendError(f"Failed to produce valid JSON after retries: {last_error}")
 
     def _compose_prompt(
         self,
@@ -85,10 +109,7 @@ class OllamaLocalBackend(LocalLLMBackend):
             "model": self.config.model,
             "prompt": prompt,
             "stream": False,
-            "options": {
-                "temperature": self.config.temperature,
-                "num_predict": self.config.num_predict,
-            },
+            "options": {"temperature": self.config.temperature, "num_predict": self.config.num_predict},
         }
         data = json.dumps(payload).encode("utf-8")
         url = self.config.base_url.rstrip("/") + "/api/generate"
@@ -121,7 +142,6 @@ class OllamaLocalBackend(LocalLLMBackend):
         in_string = False
         escape = False
         end = -1
-
         for i in range(start, len(stripped)):
             ch = stripped[i]
             if escape:
@@ -135,7 +155,6 @@ class OllamaLocalBackend(LocalLLMBackend):
                 continue
             if in_string:
                 continue
-
             if ch == "{":
                 depth += 1
             elif ch == "}":
@@ -152,4 +171,3 @@ class OllamaLocalBackend(LocalLLMBackend):
             return json.loads(candidate)
         except json.JSONDecodeError as exc:
             raise OllamaResponseError(f"Failed to parse extracted JSON object: {exc}") from exc
-

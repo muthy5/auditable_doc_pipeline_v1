@@ -10,6 +10,14 @@ def _render_supported_items(items: List[Dict[str, Any]]) -> str:
 
 
 def render_final_answer_markdown(synthesis: Dict[str, Any]) -> str:
+    """Render final synthesis JSON into a readable markdown report.
+
+    Args:
+        synthesis: Final synthesis payload.
+
+    Returns:
+        Markdown representation of the final answer.
+    """
     final_answer = synthesis["final_answer"]
     sections = [
         "# Final Answer",

@@ -4,8 +4,11 @@ import abc
 import re
 from typing import Any, Dict, List
 
+from .exceptions import BackendError
+
 
 class LocalLLMBackend(abc.ABC):
+    """Abstract interface for local JSON-producing backends."""
     @abc.abstractmethod
     def generate_json(
         self,
@@ -18,6 +21,7 @@ class LocalLLMBackend(abc.ABC):
 
 
 class RuleBasedDemoBackend(LocalLLMBackend):
+    """Rule-based backend used for deterministic local demos."""
     def generate_json(
         self,
         pass_name: str,
@@ -35,7 +39,7 @@ class RuleBasedDemoBackend(LocalLLMBackend):
             "07_synthesize": self._synthesize,
         }
         if pass_name not in dispatch:
-            raise ValueError(f"Unsupported demo pass: {pass_name}")
+            raise BackendError(f"Unsupported demo pass: {pass_name}")
         return dispatch[pass_name](payload)
 
     def _normalize_request(self, payload: Dict[str, Any]) -> Dict[str, Any]:

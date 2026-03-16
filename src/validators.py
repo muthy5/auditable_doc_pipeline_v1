@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Set
 
 from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError
 
 
 class ValidationErrorCode:
+    """String constants for validation error categories."""
     JSON_INVALID = "E_JSON_INVALID"
     SCHEMA_INVALID = "E_SCHEMA_INVALID"
     REQUIRED_FIELD_MISSING = "E_REQUIRED_FIELD_MISSING"
@@ -23,6 +25,14 @@ class ValidationErrorCode:
 
 
 def validate_chunks(chunks: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    """Validate generated chunks for basic structural correctness.
+
+    Args:
+        chunks: Chunk payload list.
+
+    Returns:
+        List of validation errors; empty when valid.
+    """
     errors: List[Dict[str, str]] = []
     for chunk in chunks:
         if not chunk.get("text", "").strip():
@@ -96,6 +106,20 @@ def validate_final_output(
     evidence_audit: Dict[str, Any],
     synthesis_schema: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
+    """Run mechanical validations over synthesized output.
+
+    Args:
+        synthesis: Final synthesis pass output.
+        task: Normalize-request output.
+        schema_audit: Schema audit output.
+        dependency_audit: Dependency audit output.
+        assumption_audit: Assumption audit output.
+        evidence_audit: Evidence audit output.
+        synthesis_schema: Optional schema for synthesis output.
+
+    Returns:
+        Validation report with pass/fail state, errors, warnings, and stats.
+    """
     errors: List[Dict[str, str]] = []
     warnings: List[Dict[str, str]] = []
 
@@ -110,7 +134,7 @@ def validate_final_output(
     if synthesis_schema is not None:
         try:
             Draft202012Validator(synthesis_schema).validate(synthesis)
-        except Exception as exc:
+        except ValidationError as exc:
             errors.append(
                 {
                     "code": ValidationErrorCode.SCHEMA_INVALID,

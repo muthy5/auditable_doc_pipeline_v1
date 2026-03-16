@@ -1,14 +1,31 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, List
 
 
 def normalize_text(value: str) -> str:
+    """Normalize text for approximate deduplication.
+
+    Args:
+        value: Input text value.
+
+    Returns:
+        Lowercased text with collapsed whitespace.
+    """
     return " ".join(value.lower().split())
 
 
 def merge_chunk_extractions(doc_id: str, chunk_extractions: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Merge per-chunk extraction outputs into global aggregates.
+
+    Args:
+        doc_id: Document identifier.
+        chunk_extractions: Outputs from the extract-chunk pass.
+
+    Returns:
+        Combined merge artifact for downstream passes.
+    """
     entity_buckets: Dict[str, set[str]] = defaultdict(set)
     defined_terms: Dict[str, Dict[str, Any]] = {}
     undefined_terms: set[str] = set()

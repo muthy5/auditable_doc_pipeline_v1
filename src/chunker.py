@@ -12,6 +12,7 @@ _HEADING_RE = re.compile(
 
 @dataclass
 class Section:
+    """Represents a contiguous document section with optional heading metadata."""
     heading: str | None
     start_char: int
     end_char: int
@@ -37,6 +38,14 @@ def _is_heading(line: str) -> bool:
 
 
 def split_into_sections(text: str) -> List[Section]:
+    """Split input text into heading-aware sections.
+
+    Args:
+        text: Full document text.
+
+    Returns:
+        Ordered sections covering the source text.
+    """
     lines = _iter_lines_with_spans(text)
     sections: List[Section] = []
 
@@ -162,6 +171,18 @@ def _split_section_by_paragraphs(
 
 
 def chunk_document(doc: Dict[str, Any], target_min_words: int, target_max_words: int, hard_max_words: int, overlap_max_words: int) -> List[Dict[str, Any]]:
+    """Chunk a document into bounded word-count JSON chunks.
+
+    Args:
+        doc: Source document payload.
+        target_min_words: Preferred minimum words per chunk.
+        target_max_words: Preferred maximum words per chunk.
+        hard_max_words: Absolute hard maximum words per chunk.
+        overlap_max_words: Reserved overlap budget (unused in v1).
+
+    Returns:
+        List of chunk payload dictionaries.
+    """
     text = doc["text"]
     sections = split_into_sections(text)
     chunks: List[Dict[str, Any]] = []

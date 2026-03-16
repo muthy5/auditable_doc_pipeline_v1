@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import re
 from pathlib import Path
 
@@ -12,6 +13,14 @@ _OLLAMA_MODEL_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
 
 
 def _parse_ollama_base_url(value: str) -> str:
+    """Validate Ollama base URL CLI input.
+
+    Args:
+        value: Candidate URL string.
+
+    Returns:
+        The validated URL.
+    """
     if not (value.startswith("http://") or value.startswith("https://")):
         raise argparse.ArgumentTypeError("--ollama-base-url must start with http:// or https://")
     if any(ch in value for ch in [" ", ";", "\n", "\r"]):
@@ -22,6 +31,14 @@ def _parse_ollama_base_url(value: str) -> str:
 
 
 def _parse_ollama_model(value: str) -> str:
+    """Validate Ollama model name CLI input.
+
+    Args:
+        value: Candidate model name.
+
+    Returns:
+        The validated model name.
+    """
     if value == "":
         return value
     if not _OLLAMA_MODEL_RE.fullmatch(value):
@@ -32,6 +49,14 @@ def _parse_ollama_model(value: str) -> str:
 
 
 def _parse_ollama_max_retries(value: str) -> int:
+    """Validate retry count for Ollama calls.
+
+    Args:
+        value: Raw integer argument.
+
+    Returns:
+        Parsed non-negative retry count.
+    """
     try:
         parsed_value = int(value)
     except ValueError as exc:
@@ -43,6 +68,11 @@ def _parse_ollama_max_retries(value: str) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the command line argument parser.
+
+    Returns:
+        Configured argument parser.
+    """
     parser = argparse.ArgumentParser(description="Run the auditable document pipeline.")
     parser.add_argument("--input", required=True, help="Path to the input text document.")
     parser.add_argument("--runs-dir", default="runs", help="Directory where run artifacts will be written.")
@@ -54,6 +84,10 @@ def build_parser() -> argparse.ArgumentParser:
         default="Identify missing information and organize the document into an actionable structure.",
         help="User goal passed to normalize_request.",
     )
+    parser.add_argument("--dry-run", action="store_true", help="Print pass plan only and skip execution.")
+    log_group = parser.add_mutually_exclusive_group()
+    log_group.add_argument("--verbose", action="store_true", help="Enable debug logging.")
+    log_group.add_argument("--quiet", action="store_true", help="Only log errors.")
     parser.add_argument(
         "--ollama-base-url",
         default="http://127.0.0.1:11434",
@@ -78,9 +112,20 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _configure_logging(verbose: bool, quiet: bool) -> None:
+    level = logging.INFO
+    if verbose:
+        level = logging.DEBUG
+    elif quiet:
+        level = logging.ERROR
+    logging.basicConfig(level=level, format="%(levelname)s: %(message)s")
+
+
 def main() -> None:
+    """Parse CLI args and run the document pipeline."""
     parser = build_parser()
     args = parser.parse_args()
+    _configure_logging(verbose=args.verbose, quiet=args.quiet)
 
     config = PipelineConfig(
         ollama_base_url=args.ollama_base_url,
@@ -93,6 +138,11 @@ def main() -> None:
 
     repo_root = Path(__file__).resolve().parents[1]
     pipeline = AuditablePipeline(repo_root=repo_root, backend_name=args.backend, config=config)
+    if args.dry_run:
+        for line in pipeline.describe_execution_plan(backend_name=args.backend):
+            print(line)
+        return
+
     run_dir = pipeline.run(
         input_path=Path(args.input),
         runs_dir=Path(args.runs_dir),
