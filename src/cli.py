@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import re
 from pathlib import Path
 
@@ -59,6 +60,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ollama-max-retries", default=2, type=_parse_ollama_max_retries)
     parser.add_argument("--claude-api-key", default="")
     parser.add_argument("--claude-model", default="claude-sonnet-4-20250514")
+    parser.add_argument("--enable-search", action="store_true", help="Enable Brave web search enrichment.")
+    parser.add_argument("--brave-api-key", default="", help="Brave Search API key (or set BRAVE_API_KEY).")
     parser.add_argument("--strict", action="store_true", help="Halt on first JSON schema validation failure.")
     parser.add_argument("--resume", action="store_true", help="Resume an existing run from first incomplete pass.")
     parser.add_argument("--dry-run", action="store_true", help="Print execution plan and exit.")
@@ -95,6 +98,8 @@ def main() -> None:
         ollama_max_retries=args.ollama_max_retries,
         claude_api_key=args.claude_api_key,
         claude_model=args.claude_model,
+        enable_search=args.enable_search,
+        brave_api_key=args.brave_api_key or os.environ.get("BRAVE_API_KEY", ""),
     )
     repo_root = Path(__file__).resolve().parents[1]
     pipeline = AuditablePipeline(repo_root=repo_root, backend_name=args.backend, config=config)

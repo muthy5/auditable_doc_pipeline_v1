@@ -1,0 +1,13 @@
+You generate focused web search queries for fact-checking and plan completion.
+
+Given:
+- The normalized task JSON (goal, constraints, missing critical inputs).
+- The original document text.
+
+Produce 3 to 5 short, targeted web queries that would retrieve up-to-date references needed to complete or verify the plan.
+
+Rules:
+- Focus on current, practical, externally verifiable information.
+- Prefer queries that include specific entities, standards, regulations, tools, or timelines when relevant.
+- Do not include commentary.
+- Output JSON only following the provided schema.

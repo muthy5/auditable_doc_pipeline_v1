@@ -34,6 +34,7 @@ class RuleBasedDemoBackend(LocalLLMBackend):
             "06_evidence_audit": self._evidence_audit,
             "07_synthesize": self._synthesize,
             "09_generate_plan": self._generate_plan,
+            "search_queries": self._search_queries,
         }
         if pass_name not in dispatch:
             raise ValueError(f"Unsupported demo pass: {pass_name}")
@@ -461,6 +462,33 @@ class RuleBasedDemoBackend(LocalLLMBackend):
                 },
             },
         }
+
+
+    def _search_queries(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        task = payload.get("task", {})
+        goal = task.get("task", {}).get("primary_goal", "") if isinstance(task, dict) else ""
+        document_text = str(payload.get("document_text", ""))
+        tokens = [
+            token
+            for token in re.findall(r"[A-Za-z]{4,}", document_text.lower())
+            if token not in {"this", "that", "with", "from", "into", "your", "have", "will", "step", "plan"}
+        ]
+        unique_tokens: List[str] = []
+        for token in tokens:
+            if token not in unique_tokens:
+                unique_tokens.append(token)
+            if len(unique_tokens) >= 3:
+                break
+        tail = " ".join(unique_tokens)
+        base = goal or "document analysis plan"
+        queries = [
+            f"latest best practices {base}",
+            f"checklist to validate {base}",
+            f"common risks and safety considerations {base}",
+        ]
+        if tail:
+            queries.append(f"current guidance {tail}")
+        return {"queries": queries[:5]}
 
     def _generate_plan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         merge = payload["merge"]

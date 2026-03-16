@@ -19,6 +19,8 @@ class PipelineConfig:
     ollama_max_retries: int = 2
     claude_api_key: str = ""
     claude_model: str = "claude-sonnet-4-20250514"
+    brave_api_key: str = ""
+    enable_search: bool = False
 
 
 @dataclass(frozen=True)
