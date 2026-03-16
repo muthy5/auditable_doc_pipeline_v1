@@ -158,6 +158,17 @@ streamlit run app.py
 The app supports the demo, Ollama, and Claude backends, allows strict mode toggling, optional web search, optional local reference documents, and renders run artifacts from the generated run directory.
 
 
+## Deploy to Streamlit Cloud
+
+1. Push your branch/repo to GitHub.
+2. In Streamlit Community Cloud, create a new app and point it at this repository with `app.py` as the entry point.
+3. In the app settings, add secrets from `.streamlit/secrets.toml.example` (for example `ANTHROPIC_API_KEY` and `BRAVE_API_KEY`).
+4. Deploy. Streamlit Cloud automatically reads `.streamlit/config.toml` for runtime settings and theme configuration.
+
+Local development can still use environment variables; the app checks `st.secrets` first, then falls back to environment variables for API keys.
+
+
+
 
 ## Pipeline pass sequence
 
