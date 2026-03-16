@@ -33,6 +33,7 @@ class RuleBasedDemoBackend(LocalLLMBackend):
             "05_assumption_audit": self._assumption_audit,
             "06_evidence_audit": self._evidence_audit,
             "07_synthesize": self._synthesize,
+            "09_generate_plan": self._generate_plan,
         }
         if pass_name not in dispatch:
             raise ValueError(f"Unsupported demo pass: {pass_name}")
@@ -458,5 +459,111 @@ class RuleBasedDemoBackend(LocalLLMBackend):
                     else "The document appears operationally complete on the available evidence.",
                     "support": bottom_line_support,
                 },
+            },
+        }
+
+    def _generate_plan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        merge = payload["merge"]
+        dependency = payload["dependency_audit"]
+
+        plan_steps = [
+            {
+                "step_number": 1,
+                "text": "Gather all ingredients and tools.",
+                "status": "original",
+                "support": ["original_document"],
+            },
+            {
+                "step_number": 2,
+                "text": "Cut and juice the lemons into the pitcher.",
+                "status": "added",
+                "support": ["dependency_audit:block_dep_001"],
+                "warning": "This is a required transformation step missing in the original plan.",
+            },
+            {
+                "step_number": 3,
+                "text": "Combine lemon juice, sugar, and water until dissolved.",
+                "status": "original",
+                "support": ["original_document"],
+            },
+            {
+                "step_number": 4,
+                "text": "Add ice and serve cold.",
+                "status": "original",
+                "support": ["original_document"],
+            },
+        ]
+
+        warnings = [
+            {
+                "text": "Original plan omitted a juicing step, which blocks successful output.",
+                "severity": "warning",
+                "support": ["block_dep_001"],
+            }
+        ]
+        if not dependency.get("blocking_dependencies"):
+            warnings = [
+                {
+                    "text": "No blocking dependency issues detected.",
+                    "severity": "info",
+                    "support": ["dependency_audit"],
+                }
+            ]
+
+        return {
+            "doc_id": merge["doc_id"],
+            "plan": {
+                "objective": {
+                    "text": "Prepare lemonade from listed ingredients.",
+                    "support": ["original_document"],
+                },
+                "materials_and_quantities": [
+                    {"item": "Lemons", "quantity": "6", "source": "stated"},
+                    {"item": "Sugar", "quantity": "1 cup", "source": "stated"},
+                    {"item": "Water", "quantity": "4 cups", "source": "stated"},
+                    {"item": "Ice", "quantity": "2 cups", "source": "stated"},
+                ],
+                "equipment_required": [
+                    {"item": "Pitcher", "source": "inferred"}
+                ],
+                "prerequisites": [
+                    {
+                        "text": "Ingredient preparation must happen before mixing.",
+                        "support": ["ord_001"],
+                    }
+                ],
+                "steps": plan_steps,
+                "time_estimates": {
+                    "total_estimated": "unknown",
+                    "confidence": "unknown",
+                },
+                "warnings_and_safety": warnings,
+                "quality_checkpoints": [
+                    {
+                        "after_step": 3,
+                        "check": "Taste for sugar balance before adding ice.",
+                        "support": ["inferred_from_audit"],
+                    }
+                ],
+                "blocking_items": [],
+                "assumptions_made": [
+                    {
+                        "text": "User has basic kitchen tools available.",
+                        "support": ["inferred_from_audit"],
+                    }
+                ],
+                "cost_indicators": [
+                    {"item": "Lemons", "cost": "unknown", "source": "unknown"},
+                    {"item": "Sugar", "cost": "unknown", "source": "unknown"},
+                    {"item": "Water", "cost": "unknown", "source": "unknown"},
+                    {"item": "Ice", "cost": "unknown", "source": "unknown"},
+                ],
+                "contingencies": [
+                    {
+                        "if_condition": "Lemonade is too tart",
+                        "then_action": "Add small increments of sugar and stir.",
+                        "support": ["inferred_from_audit"],
+                    }
+                ],
             },
         }

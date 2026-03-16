@@ -12,7 +12,7 @@ from .chunker import chunk_document
 from .config import PipelineConfig, RepoPaths
 from .exceptions import PipelineError
 from .llm_interface import RuleBasedDemoBackend
-from .markdown_writer import render_final_answer_markdown
+from .markdown_writer import render_final_answer_markdown, render_plan_markdown
 from .merge_engine import merge_chunk_extractions
 from .ollama_backend import OllamaBackendConfig, OllamaLocalBackend
 from .pass_runner import PassRunner
@@ -40,6 +40,7 @@ class AuditablePipeline:
         ("05_assumption_audit", "05_assumption_audit.txt", "05_assumption_audit.schema.json"),
         ("06_evidence_audit", "06_evidence_audit.txt", "06_evidence_audit.schema.json"),
         ("07_synthesize", "07_synthesize.txt", "07_synthesize.schema.json"),
+        ("09_generate_plan", "09_generate_plan.txt", "09_generate_plan.schema.json"),
         ("08_validate_final", None, "08_validate_final.schema.json"),
     ]
 
@@ -146,6 +147,7 @@ class AuditablePipeline:
                     "05_assumption_audit": passes_dir / "05_assumption_audit.json",
                     "06_evidence_audit": passes_dir / "06_evidence_audit.json",
                     "07_synthesize": passes_dir / "07_synthesize.json",
+                    "09_generate_plan": passes_dir / "09_generate_plan.json",
                     "08_validate_final": passes_dir / "08_validate_final.json",
                 }
                 target = path_map[pass_name]
@@ -197,6 +199,7 @@ class AuditablePipeline:
             assumption_audit = run_or_load("05_assumption_audit", "05_assumption_audit.txt", "05_assumption_audit.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit})
             evidence_audit = run_or_load("06_evidence_audit", "06_evidence_audit.txt", "06_evidence_audit.schema.json", {"merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit})
             synthesis = run_or_load("07_synthesize", "07_synthesize.txt", "07_synthesize.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "evidence_audit": evidence_audit})
+            plan = run_or_load("09_generate_plan", "09_generate_plan.txt", "09_generate_plan.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "evidence_audit": evidence_audit, "synthesis": synthesis})
 
             validation = validate_final_output(synthesis, normalize, schema_audit, dependency_audit, assumption_audit, evidence_audit, load_schema(self.repo_paths.schemas_dir, "07_synthesize.schema.json"))
             if not (resume and has_output("08_validate_final")):
@@ -205,6 +208,8 @@ class AuditablePipeline:
 
             (final_dir / "final_answer.json").write_text(json.dumps(synthesis, indent=2), encoding="utf-8")
             (final_dir / "final_answer.md").write_text(render_final_answer_markdown(synthesis), encoding="utf-8")
+            (final_dir / "plan.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
+            (final_dir / "plan.md").write_text(render_plan_markdown(plan), encoding="utf-8")
 
             total_time = time.perf_counter() - start_total
             self.pass_runner.write_timings(run_dir / "timing.json", total_time)

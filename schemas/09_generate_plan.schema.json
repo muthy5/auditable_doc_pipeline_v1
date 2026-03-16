@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["doc_id", "plan"],
+  "properties": {
+    "doc_id": { "type": "string" },
+    "plan": {
+      "type": "object",
+      "required": [
+        "objective",
+        "materials_and_quantities",
+        "equipment_required",
+        "prerequisites",
+        "steps",
+        "time_estimates",
+        "warnings_and_safety",
+        "quality_checkpoints",
+        "blocking_items",
+        "assumptions_made",
+        "cost_indicators",
+        "contingencies"
+      ],
+      "properties": {
+        "objective": {
+          "type": "object",
+          "required": ["text", "support"],
+          "properties": {
+            "text": { "type": "string" },
+            "support": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "materials_and_quantities": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["item", "quantity", "source"],
+            "properties": {
+              "item": { "type": "string" },
+              "quantity": { "type": "string" },
+              "source": { "type": "string", "enum": ["stated", "inferred", "unknown"] }
+            },
+            "additionalProperties": true
+          }
+        },
+        "equipment_required": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["item", "source"],
+            "properties": {
+              "item": { "type": "string" },
+              "source": { "type": "string", "enum": ["stated", "inferred"] }
+            },
+            "additionalProperties": true
+          }
+        },
+        "prerequisites": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["text", "support"],
+            "properties": {
+              "text": { "type": "string" },
+              "support": { "type": "array", "items": { "type": "string" } }
+            },
+            "additionalProperties": true
+          }
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["step_number", "text", "status", "support"],
+            "properties": {
+              "step_number": { "type": "integer" },
+              "text": { "type": "string" },
+              "status": { "type": "string", "enum": ["original", "reordered", "added"] },
+              "support": { "type": "array", "items": { "type": "string" } },
+              "time_estimate": { "type": "string" },
+              "warning": { "type": "string" }
+            },
+            "additionalProperties": true
+          }
+        },
+        "time_estimates": {
+          "type": "object",
+          "required": ["total_estimated", "confidence"],
+          "properties": {
+            "total_estimated": { "type": "string" },
+            "confidence": { "type": "string", "enum": ["stated", "inferred", "unknown"] }
+          },
+          "additionalProperties": true
+        },
+        "warnings_and_safety": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["text", "severity", "support"],
+            "properties": {
+              "text": { "type": "string" },
+              "severity": { "type": "string", "enum": ["critical", "warning", "info"] },
+              "support": { "type": "array", "items": { "type": "string" } }
+            },
+            "additionalProperties": true
+          }
+        },
+        "quality_checkpoints": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["after_step", "check", "support"],
+            "properties": {
+              "after_step": { "type": "integer" },
+              "check": { "type": "string" },
+              "support": { "type": "array", "items": { "type": "string" } }
+            },
+            "additionalProperties": true
+          }
+        },
+        "blocking_items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["text", "support"],
+            "properties": {
+              "text": { "type": "string" },
+              "support": { "type": "array", "items": { "type": "string" } }
+            },
+            "additionalProperties": true
+          }
+        },
+        "assumptions_made": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["text", "support"],
+            "properties": {
+              "text": { "type": "string" },
+              "support": { "type": "array", "items": { "type": "string" } }
+            },
+            "additionalProperties": true
+          }
+        },
+        "cost_indicators": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["item", "cost", "source"],
+            "properties": {
+              "item": { "type": "string" },
+              "cost": { "type": "string" },
+              "source": { "type": "string", "enum": ["stated", "inferred", "unknown"] }
+            },
+            "additionalProperties": true
+          }
+        },
+        "contingencies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["if_condition", "then_action", "support"],
+            "properties": {
+              "if_condition": { "type": "string" },
+              "then_action": { "type": "string" },
+              "support": { "type": "array", "items": { "type": "string" } }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
