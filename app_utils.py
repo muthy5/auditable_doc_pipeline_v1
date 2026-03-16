@@ -58,9 +58,96 @@ def parse_final_sections(run_dir: Path) -> dict[str, Any]:
 def parse_plan_output(run_dir: Path) -> dict[str, Any]:
     """Parse generated plan JSON for UI rendering."""
     plan_path = run_dir / "final" / "plan.json"
-    if not plan_path.exists():
-        return {}
-    return _read_json(plan_path).get("plan", {})
+    if plan_path.exists():
+        return _read_json(plan_path).get("plan", {})
+
+    fallback_path = run_dir / "passes" / "09_generate_plan.json"
+    if fallback_path.exists():
+        return _read_json(fallback_path).get("plan", {})
+    return {}
+
+
+def format_gap_plain_english(gap: dict[str, Any]) -> str:
+    """Convert a gap-like object into a readable sentence."""
+    reason = str(gap.get("reason") or gap.get("text") or "Missing details were identified.").strip()
+    section = str(gap.get("section") or gap.get("item") or "").strip()
+    if section:
+        return f"{reason} (Area: {section})"
+    return reason
+
+
+def get_status_color(synthesis: dict[str, Any]) -> str:
+    """Return red/yellow/green status based on blocking gap signals."""
+    final_answer = synthesis.get("final_answer", {}) if synthesis else {}
+    dependency_count = len(final_answer.get("dependencies", []))
+    missing_count = len(final_answer.get("missing_information", []))
+    uncertainty_count = len(final_answer.get("uncertainties", []))
+
+    if dependency_count > 0:
+        return "red"
+    if missing_count > 0 or uncertainty_count > 0:
+        return "yellow"
+    return "green"
+
+
+def format_step_with_badge(step: dict[str, Any]) -> str:
+    """Return step text prefixed with a status badge emoji."""
+    badge_map = {
+        "original": "✅",
+        "added": "➕",
+        "reordered": "🔁",
+    }
+    status = str(step.get("status", "")).lower()
+    badge = badge_map.get(status, "•")
+    text = str(step.get("text") or "").strip()
+    return f"{badge} {text}" if text else badge
+
+
+def format_plan_for_display(plan_data: dict[str, Any]) -> dict[str, Any]:
+    """Convert raw plan JSON into display-friendly values."""
+    materials = [
+        {
+            "Item": str(item.get("item", "")),
+            "Quantity": str(item.get("quantity", "")),
+            "Source": str(item.get("source", "unknown")).replace("_", " ").title(),
+        }
+        for item in plan_data.get("materials_and_quantities", [])
+    ]
+
+    steps = []
+    for step in plan_data.get("steps", []):
+        steps.append(
+            {
+                "number": step.get("step_number"),
+                "text": format_step_with_badge(step),
+                "status": str(step.get("status", "unknown")),
+                "warning": str(step.get("warning", "")).strip(),
+            }
+        )
+
+    checkpoints_by_step: dict[int, list[str]] = {}
+    for checkpoint in plan_data.get("quality_checkpoints", []):
+        step_number = int(checkpoint.get("after_step", 0))
+        checkpoints_by_step.setdefault(step_number, []).append(str(checkpoint.get("check", "")).strip())
+
+    return {
+        "objective": str(plan_data.get("objective", {}).get("text", "")).strip(),
+        "time_estimate": str(plan_data.get("time_estimates", {}).get("total_estimated", "")).strip(),
+        "time_confidence": str(plan_data.get("time_estimates", {}).get("confidence", "")).strip(),
+        "materials": materials,
+        "steps": steps,
+        "quality_checkpoints": checkpoints_by_step,
+        "warnings": [str(item.get("text", "")).strip() for item in plan_data.get("warnings_and_safety", []) if item.get("text")],
+        "assumptions": [str(item.get("text", "")).strip() for item in plan_data.get("assumptions_made", []) if item.get("text")],
+        "blocking_items": [str(item.get("text", "")).strip() for item in plan_data.get("blocking_items", []) if item.get("text")],
+        "contingencies": [
+            {
+                "if": str(item.get("if_condition", "")).strip(),
+                "then": str(item.get("then_action", "")).strip(),
+            }
+            for item in plan_data.get("contingencies", [])
+        ],
+    }
 
 
 def collect_pass_outputs(run_dir: Path) -> dict[str, Any]:
