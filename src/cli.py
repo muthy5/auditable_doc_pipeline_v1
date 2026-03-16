@@ -75,6 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=_parse_ollama_max_retries,
         help="Retries for invalid/non-JSON Ollama output.",
     )
+    parser.add_argument("--strict", action="store_true", help="Halt on first JSON schema validation failure.")
     return parser
 
 
@@ -99,6 +100,7 @@ def main() -> None:
         doc_id=args.doc_id,
         title=args.title,
         user_goal=args.goal,
+        strict=args.strict,
     )
     print(run_dir)
 

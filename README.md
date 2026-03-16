@@ -131,6 +131,22 @@ A rule-based local demo backend. Useful for testing the controller architecture 
 A real local model backend via an Ollama server. This backend preserves the same pass sequence,
 schema validation, and run artifact layout as the demo backend.
 
+Prerequisites:
+
+```bash
+# 1) Install Ollama
+curl -fsSL https://ollama.com/install.sh | sh
+
+# 2) Pull a model
+ollama pull llama3.1:8b-instruct-q4_K_M
+
+# 3) Start the local server
+ollama serve
+
+# 4) Verify the server is reachable
+curl http://127.0.0.1:11434/api/tags
+```
+
 Example:
 
 ```bash
@@ -141,6 +157,16 @@ python -m src.cli \
   --ollama-model llama3.1:8b-instruct-q4_K_M \
   --ollama-base-url http://127.0.0.1:11434
 ```
+
+### Model selection guidance
+
+- Larger parameter models (for example, 70B) generally produce better extraction/audit quality, but they require substantially more RAM/VRAM.
+- Use instruct/chat-tuned models. The pipeline expects consistent, structured JSON output, and base models are far less reliable at JSON compliance.
+- Recommended starting points:
+  - Testing and local iteration: `llama3.1:8b-instruct-q4_K_M`
+  - Higher quality: `llama3.1:70b-instruct-q4_K_M` or `mistral-nemo:12b-instruct`
+- Minimum recommendation: an 8B-parameter instruct model. Below that, JSON compliance and pass stability drop significantly.
+- Llama and Mistral are different model families (Meta vs Mistral AI). Either can work for this pipeline; prioritize parameter size and instruct tuning.
 
 ### Future backends
 Replace the demo backend with a real local model backend that implements the interface in `src/llm_interface.py`.
