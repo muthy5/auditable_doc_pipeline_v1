@@ -14,6 +14,7 @@ PASS_OUTPUT_FILES = [
     "07_synthesize.json",
     "09_generate_plan.json",
     "08_validate_final.json",
+    "search_web_context.json",
 ]
 
 PASS_SEQUENCE = [

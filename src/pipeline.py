@@ -13,6 +13,8 @@ from .config import PipelineConfig, RepoPaths
 from .exceptions import PipelineError
 from .llm_interface import RuleBasedDemoBackend
 from .markdown_writer import render_final_answer_markdown, render_plan_markdown
+from .prompts import load_prompt
+from .search import BraveSearchClient
 from .merge_engine import merge_chunk_extractions
 from .ollama_backend import OllamaBackendConfig, OllamaLocalBackend
 from .pass_runner import PassRunner
@@ -85,12 +87,44 @@ class AuditablePipeline:
             missing.append(str(repo_paths.schemas_dir / "document.schema.json"))
         if not (repo_paths.schemas_dir / "chunk.schema.json").exists():
             missing.append(str(repo_paths.schemas_dir / "chunk.schema.json"))
+        if not (repo_paths.prompts_dir / "search_queries.txt").exists():
+            missing.append(str(repo_paths.prompts_dir / "search_queries.txt"))
+        if not (repo_paths.schemas_dir / "search_queries.schema.json").exists():
+            missing.append(str(repo_paths.schemas_dir / "search_queries.schema.json"))
         if missing:
             raise PipelineError("Missing required files:\n" + "\n".join(missing))
 
     def build_execution_plan(self, backend: str) -> list[dict[str, Any]]:
         """Return pass execution plan metadata."""
         return [{"pass": name, "order": i + 1, "backend": backend} for i, (name, _, _) in enumerate(self.PASS_SEQUENCE)]
+
+    def _generate_search_queries(self, normalize: dict[str, Any], document_text: str) -> list[str]:
+        """Generate search queries from normalized task + source document."""
+        payload = {"task": normalize, "document_text": document_text}
+        query_output = self.backend.generate_json(
+            pass_name="search_queries",
+            prompt_text=load_prompt(self.repo_paths.prompts_dir, "search_queries.txt"),
+            payload=payload,
+            schema=load_schema(self.repo_paths.schemas_dir, "search_queries.schema.json"),
+        )
+        self.pass_runner.validate_with_schema("search_queries.schema.json", query_output)
+        queries = query_output.get("queries", [])
+        return [q for q in queries if isinstance(q, str) and q.strip()]
+
+    def _build_web_context(self, normalize: dict[str, Any], document_text: str) -> list[dict[str, Any]]:
+        """Generate queries and execute Brave searches for each query."""
+        if not (self.config.enable_search and self.config.brave_api_key):
+            return []
+        try:
+            client = BraveSearchClient(api_key=self.config.brave_api_key)
+            queries = self._generate_search_queries(normalize, document_text)
+            web_context: list[dict[str, Any]] = []
+            for query in queries:
+                web_context.append({"query": query, "results": client.search(query)})
+            return web_context
+        except Exception as exc:  # noqa: BLE001 - search enrichment should not fail pipeline
+            LOGGER.warning("Web search enrichment skipped due to error: %s", exc)
+            return []
 
     def run(
         self,
@@ -168,6 +202,15 @@ class AuditablePipeline:
                 LOGGER.info("Starting pass 00_normalize_request")
                 normalize = self.pass_runner.run_model_pass("00_normalize_request", "00_normalize_request.txt", "00_normalize_request.schema.json", normalize_input, passes_dir / "00_normalize_request.json", strict)
 
+            web_context: list[dict[str, Any]] = []
+            web_context_output = passes_dir / "search_web_context.json"
+            if resume and web_context_output.exists():
+                web_context = json.loads(web_context_output.read_text(encoding="utf-8")).get("web_context", [])
+            else:
+                web_context = self._build_web_context(normalize=normalize, document_text=text)
+                if web_context:
+                    web_context_output.write_text(json.dumps({"web_context": web_context}, indent=2, ensure_ascii=False), encoding="utf-8")
+
             extraction_dir = passes_dir / "01_extract_chunk"
             extraction_dir.mkdir(parents=True, exist_ok=True)
             chunk_extractions: list[dict[str, Any]] = []
@@ -177,7 +220,7 @@ class AuditablePipeline:
                     extraction = json.loads(out.read_text())
                 else:
                     LOGGER.info("Starting pass 01_extract_chunk for %s", chunk["chunk_id"])
-                    extraction = self.pass_runner.run_model_pass("01_extract_chunk", "01_extract_chunk.txt", "01_extract_chunk.schema.json", {"task": normalize, "chunk": chunk}, out, strict)
+                    extraction = self.pass_runner.run_model_pass("01_extract_chunk", "01_extract_chunk.txt", "01_extract_chunk.schema.json", {"task": normalize, "chunk": chunk, "web_context": web_context}, out, strict)
                 chunk_extractions.append(extraction)
 
             merge = merge_chunk_extractions(doc_id, chunk_extractions)
@@ -194,12 +237,12 @@ class AuditablePipeline:
                 LOGGER.info("Starting pass %s", pass_name)
                 return self.pass_runner.run_model_pass(pass_name, prompt, schema, payload, output_path, strict)
 
-            schema_audit = run_or_load("03_schema_audit", "03_schema_audit.txt", "03_schema_audit.schema.json", {"task": normalize, "merge": merge, "chunk_summaries": chunk_summaries})
-            dependency_audit = run_or_load("04_dependency_audit", "04_dependency_audit.txt", "04_dependency_audit.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit})
-            assumption_audit = run_or_load("05_assumption_audit", "05_assumption_audit.txt", "05_assumption_audit.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit})
-            evidence_audit = run_or_load("06_evidence_audit", "06_evidence_audit.txt", "06_evidence_audit.schema.json", {"merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit})
-            synthesis = run_or_load("07_synthesize", "07_synthesize.txt", "07_synthesize.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "evidence_audit": evidence_audit})
-            plan = run_or_load("09_generate_plan", "09_generate_plan.txt", "09_generate_plan.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "evidence_audit": evidence_audit, "synthesis": synthesis})
+            schema_audit = run_or_load("03_schema_audit", "03_schema_audit.txt", "03_schema_audit.schema.json", {"task": normalize, "merge": merge, "chunk_summaries": chunk_summaries, "web_context": web_context})
+            dependency_audit = run_or_load("04_dependency_audit", "04_dependency_audit.txt", "04_dependency_audit.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "web_context": web_context})
+            assumption_audit = run_or_load("05_assumption_audit", "05_assumption_audit.txt", "05_assumption_audit.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "web_context": web_context})
+            evidence_audit = run_or_load("06_evidence_audit", "06_evidence_audit.txt", "06_evidence_audit.schema.json", {"merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "web_context": web_context})
+            synthesis = run_or_load("07_synthesize", "07_synthesize.txt", "07_synthesize.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "evidence_audit": evidence_audit, "web_context": web_context})
+            plan = run_or_load("09_generate_plan", "09_generate_plan.txt", "09_generate_plan.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "evidence_audit": evidence_audit, "synthesis": synthesis, "web_context": web_context})
 
             validation = validate_final_output(synthesis, normalize, schema_audit, dependency_audit, assumption_audit, evidence_audit, load_schema(self.repo_paths.schemas_dir, "07_synthesize.schema.json"))
             if not (resume and has_output("08_validate_final")):

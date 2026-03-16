@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import threading
 import time
@@ -39,6 +40,10 @@ with st.sidebar:
         ollama_model = st.text_input("Ollama model name", value="")
 
     strict_mode = st.toggle("Strict mode", value=False)
+    enable_search = st.toggle("Web Search", value=False)
+    brave_api_key = ""
+    if enable_search:
+        brave_api_key = st.text_input("Brave API Key", type="password")
     user_goal = st.text_area(
         "User goal",
         value="Identify missing information and organize the document into an actionable structure.",
@@ -55,6 +60,8 @@ if run_clicked:
         st.error("Please provide a Claude API key.")
     elif backend == "ollama" and not ollama_model:
         st.error("Please provide an Ollama model name.")
+    elif enable_search and not brave_api_key:
+        st.error("Please provide a Brave API key when Web Search is enabled.")
     else:
         try:
             with tempfile.TemporaryDirectory(prefix="auditable_pipeline_") as temp_dir:
@@ -67,6 +74,8 @@ if run_clicked:
                     claude_model=claude_model,
                     ollama_base_url=ollama_base_url,
                     ollama_model=ollama_model,
+                    enable_search=enable_search,
+                    brave_api_key=brave_api_key,
                 )
 
                 pipeline = AuditablePipeline(repo_root=Path(__file__).parent, backend_name=backend, config=config)
@@ -187,6 +196,18 @@ if run_clicked:
                                         f"<strong>{warning.get('severity', 'info').upper()}:</strong> {warning.get('text', '')}</div>",
                                         unsafe_allow_html=True,
                                     )
+
+
+                        web_context_path = run_dir / "passes" / "search_web_context.json"
+                        web_context_payload: dict[str, object] = {}
+                        if web_context_path.exists():
+                            web_context_payload = json.loads(web_context_path.read_text(encoding="utf-8"))
+
+                        with st.expander("Web Search Results"):
+                            if not web_context_payload.get("web_context"):
+                                st.info("No web search context captured for this run.")
+                            else:
+                                st.json(web_context_payload)
 
                         with st.expander("Raw Pass Outputs"):
                             st.json(pass_outputs)

@@ -52,6 +52,8 @@ python -m src --input examples/lemonade_plan_missing_juicing.txt --backend demo 
 - `--resume`: resume existing run (`--run-dir`) from first incomplete pass.
 - `--verbose`: set logging level to DEBUG.
 - `--quiet`: set logging level to ERROR.
+- `--enable-search`: enable optional Brave web-search enrichment (off by default).
+- `--brave-api-key`: Brave API key (falls back to `BRAVE_API_KEY`).
 
 ## Backends
 
@@ -64,6 +66,26 @@ make run-ollama
 ### claude
 
 Use the Claude API backend with `--backend claude`. Provide credentials via `--claude-api-key` or the `ANTHROPIC_API_KEY` environment variable. The default model is `claude-sonnet-4-20250514` (override with `--claude-model`).
+
+
+## Web search enrichment (Brave)
+
+You can optionally augment all passes with current web context:
+
+```bash
+python -m src \
+  --input examples/lemonade_plan_missing_juicing.txt \
+  --backend claude \
+  --enable-search \
+  --brave-api-key "$BRAVE_API_KEY"
+```
+
+How it works:
+- After `00_normalize_request`, the pipeline generates 3-5 targeted queries (`prompts/search_queries.txt`).
+- It calls Brave Web Search and stores normalized results (`title`, `url`, `snippet`).
+- Results are injected into subsequent pass payloads as `web_context`.
+
+To get a free Brave API key, create an account in the Brave Search API dashboard and generate a subscription token, then pass it via `--brave-api-key` or export `BRAVE_API_KEY`.
 
 ## Run outputs
 
