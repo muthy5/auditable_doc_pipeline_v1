@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import threading
 import time
@@ -24,6 +25,9 @@ from src.document_classifier import SUPPORTED_DOCUMENT_TYPES
 st.set_page_config(page_title="Auditable Document Pipeline", page_icon="📄", layout="wide")
 st.title("Auditable Document Pipeline")
 
+default_claude_api_key = st.secrets.get("ANTHROPIC_API_KEY", os.environ.get("ANTHROPIC_API_KEY", ""))
+default_brave_api_key = st.secrets.get("BRAVE_API_KEY", os.environ.get("BRAVE_API_KEY", ""))
+
 with st.sidebar:
     st.header("Run Settings")
     backend = st.selectbox("Backend", ["demo", "ollama", "claude"], index=0)
@@ -31,7 +35,7 @@ with st.sidebar:
     claude_api_key = ""
     claude_model = "claude-sonnet-4-20250514"
     if backend == "claude":
-        claude_api_key = st.text_input("Claude API Key", type="password")
+        claude_api_key = st.text_input("Claude API Key", type="password", value=default_claude_api_key)
         claude_model = st.text_input("Claude model", value="claude-sonnet-4-20250514")
 
     ollama_base_url = "http://127.0.0.1:11434"
@@ -44,7 +48,7 @@ with st.sidebar:
     enable_search = st.toggle("Web Search", value=False)
     brave_api_key = ""
     if enable_search:
-        brave_api_key = st.text_input("Brave API Key", type="password")
+        brave_api_key = st.text_input("Brave API Key", type="password", value=default_brave_api_key)
     st.markdown("---")
     st.subheader("Reference Documents")
     reference_dir_input = st.text_input("Reference directory path", value="")
