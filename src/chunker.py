@@ -2,82 +2,72 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any
 
+from .exceptions import ChunkingError
 
 _HEADING_RE = re.compile(
-    r"^(?:#{1,6}\s+.+|[A-Z][A-Z0-9\s\-:]{3,}|(?:\d+(?:\.\d+)*)[\)\.]?\s+.+|(?:Goal|Ingredients|Materials|Plan|Steps|Notes|Expected Output|Objective):\s*)$"
+    r"^(?:#{1,6}\s+.+|[A-Z][A-Z0-9\s\-]*:|(?:\d+(?:\.\d+)*)[\)\.]?\s+.+|(?:Goal|Ingredients|Materials|Plan|Steps|Notes|Expected Output|Objective):\s*)$"
 )
 
 
 @dataclass
 class Section:
+    """A contiguous section of the source document."""
+
     heading: str | None
     start_char: int
     end_char: int
     text: str
 
 
-def _iter_lines_with_spans(text: str) -> List[tuple[str, int, int]]:
-    spans: List[tuple[str, int, int]] = []
+def _iter_lines_with_spans(text: str) -> list[tuple[str, int, int]]:
+    """Return document lines with start and end offsets."""
+    spans: list[tuple[str, int, int]] = []
     cursor = 0
     for line in text.splitlines(keepends=True):
         start = cursor
         end = cursor + len(line)
         spans.append((line, start, end))
         cursor = end
-    if not spans:
-        spans.append(("", 0, 0))
-    return spans
+    return spans or [("", 0, 0)]
 
 
 def _is_heading(line: str) -> bool:
+    """Return True when a line should be treated as a heading."""
     stripped = line.strip()
     return bool(stripped) and bool(_HEADING_RE.match(stripped))
 
 
-def split_into_sections(text: str) -> List[Section]:
-    lines = _iter_lines_with_spans(text)
-    sections: List[Section] = []
+def _last_n_words(text: str, n: int) -> str:
+    """Return the last n whitespace-delimited words from text."""
+    words = text.split()
+    return " ".join(words[-n:]) if n > 0 else ""
 
+
+def split_into_sections(text: str) -> list[Section]:
+    """Split text into heading-based sections."""
+    lines = _iter_lines_with_spans(text)
+    sections: list[Section] = []
     current_heading: str | None = None
     current_start = 0
 
     for i, (line, start, _end) in enumerate(lines):
-        if i == 0:
+        if i == 0 and _is_heading(line):
+            current_heading = line.strip().rstrip(":")
             current_start = 0
-
+            continue
         if _is_heading(line) and start != 0:
-            prev_end = start
-            section_text = text[current_start:prev_end]
+            section_text = text[current_start:start]
             if section_text.strip():
-                sections.append(
-                    Section(
-                        heading=current_heading,
-                        start_char=current_start,
-                        end_char=prev_end,
-                        text=section_text,
-                    )
-                )
+                sections.append(Section(current_heading, current_start, start, section_text))
             current_heading = line.strip().rstrip(":")
             current_start = start
 
-        elif i == 0 and _is_heading(line):
-            current_heading = line.strip().rstrip(":")
-            current_start = 0
-
     final_text = text[current_start:]
     if final_text.strip():
-        sections.append(
-            Section(
-                heading=current_heading,
-                start_char=current_start,
-                end_char=len(text),
-                text=final_text,
-            )
-        )
-
-    return sections if sections else [Section(heading=None, start_char=0, end_char=len(text), text=text)]
+        sections.append(Section(current_heading, current_start, len(text), final_text))
+    return sections or [Section(None, 0, len(text), text)]
 
 
 def _split_section_by_paragraphs(
@@ -85,88 +75,83 @@ def _split_section_by_paragraphs(
     doc_id: str,
     start_index: int,
     target_min_words: int,
-    target_max_words: int,
+    _target_max_words: int,
     hard_max_words: int,
     overlap_max_words: int,
-) -> List[Dict[str, Any]]:
-    text = section.text
-    paragraphs = [p for p in re.split(r"\n\s*\n", text) if p.strip()]
-    if not paragraphs:
-        paragraphs = [text]
+) -> list[dict[str, Any]]:
+    """Split a section into paragraph-based chunks with overlap metadata."""
+    paragraphs = [p for p in re.split(r"\n\s*\n", section.text) if p.strip()] or [section.text]
 
-    paragraph_spans: List[tuple[str, int, int]] = []
-    cursor = section.start_char
-    remaining = text
-    for para in paragraphs:
-        idx = remaining.find(para)
-        if idx < 0:
-            idx = 0
-        absolute_start = cursor + idx
-        absolute_end = absolute_start + len(para)
-        paragraph_spans.append((para, absolute_start, absolute_end))
-        cursor = absolute_end
-        remaining = text[(absolute_end - section.start_char):]
-
-    chunks: List[Dict[str, Any]] = []
-    buffer_texts: List[str] = []
-    buffer_start: int | None = None
-    buffer_end: int | None = None
-    buffer_words = 0
+    chunks: list[dict[str, Any]] = []
+    buffer: list[str] = []
     chunk_index = start_index
+    cursor = section.start_char
 
     def flush() -> None:
-        nonlocal buffer_texts, buffer_start, buffer_end, buffer_words, chunk_index
-        if not buffer_texts or buffer_start is None or buffer_end is None:
+        nonlocal buffer, chunk_index
+        if not buffer:
             return
-        chunk_text = "\n\n".join(buffer_texts)
-        chunk_words = len(chunk_text.split())
+        chunk_text = "\n\n".join(buffer).strip()
+        word_count = len(chunk_text.split())
+        end_char = cursor
+        start_char = max(section.start_char, end_char - len(chunk_text))
         chunks.append(
             {
                 "chunk_id": f"chunk_{chunk_index:04d}",
                 "doc_id": doc_id,
                 "index": chunk_index,
                 "heading_path": [section.heading] if section.heading else [],
-                "start_char": buffer_start,
-                "end_char": buffer_end,
+                "start_char": start_char,
+                "end_char": end_char,
                 "start_word": 1,
-                "end_word": chunk_words,
+                "end_word": word_count,
                 "overlap_prev_words": 0,
                 "overlap_next_words": 0,
                 "text": chunk_text,
             }
         )
         chunk_index += 1
-        buffer_texts = []
-        buffer_start = None
-        buffer_end = None
-        buffer_words = 0
+        buffer = []
 
-    for para, start_char, end_char in paragraph_spans:
+    for para in paragraphs:
         para_words = len(para.split())
-        if buffer_start is None:
-            buffer_start = start_char
-
-        if buffer_words + para_words > hard_max_words and buffer_texts:
+        existing_words = len(" ".join(buffer).split()) if buffer else 0
+        if buffer and existing_words + para_words > hard_max_words:
             flush()
-            buffer_start = start_char
-
-        buffer_texts.append(para)
-        buffer_end = end_char
-        buffer_words += para_words
-
-        if buffer_words >= target_min_words:
+        buffer.append(para)
+        cursor += len(para)
+        if len(" ".join(buffer).split()) >= target_min_words:
             flush()
-
+        cursor += 2
     flush()
+
+    for idx in range(1, len(chunks)):
+        prev_text = chunks[idx - 1]["text"]
+        overlap_text = _last_n_words(prev_text, overlap_max_words)
+        overlap_words = len(overlap_text.split())
+        if overlap_words:
+            chunks[idx]["text"] = f"{overlap_text}\n\n{chunks[idx]['text']}"
+            chunks[idx]["start_word"] = 1
+            chunks[idx]["end_word"] = len(chunks[idx]["text"].split())
+            chunks[idx]["overlap_prev_words"] = overlap_words
+            chunks[idx - 1]["overlap_next_words"] = overlap_words
     return chunks
 
 
-def chunk_document(doc: Dict[str, Any], target_min_words: int, target_max_words: int, hard_max_words: int, overlap_max_words: int) -> List[Dict[str, Any]]:
+def chunk_document(
+    doc: dict[str, Any],
+    target_min_words: int,
+    target_max_words: int,
+    hard_max_words: int,
+    overlap_max_words: int,
+) -> list[dict[str, Any]]:
+    """Chunk a document into bounded sections for downstream passes."""
     text = doc["text"]
+    if not text.strip():
+        raise ChunkingError("Document text is empty.")
     sections = split_into_sections(text)
-    chunks: List[Dict[str, Any]] = []
+    chunks: list[dict[str, Any]] = []
     chunk_index = 1
-
     for section in sections:
         section_words = len(section.text.split())
         if section_words <= target_max_words:
@@ -186,17 +171,16 @@ def chunk_document(doc: Dict[str, Any], target_min_words: int, target_max_words:
                 }
             )
             chunk_index += 1
-        else:
-            split_chunks = _split_section_by_paragraphs(
-                section=section,
-                doc_id=doc["doc_id"],
-                start_index=chunk_index,
-                target_min_words=target_min_words,
-                target_max_words=target_max_words,
-                hard_max_words=hard_max_words,
-                overlap_max_words=overlap_max_words,
-            )
-            chunks.extend(split_chunks)
-            chunk_index += len(split_chunks)
-
+            continue
+        split_chunks = _split_section_by_paragraphs(
+            section,
+            doc_id=doc["doc_id"],
+            start_index=chunk_index,
+            target_min_words=target_min_words,
+            _target_max_words=target_max_words,
+            hard_max_words=hard_max_words,
+            overlap_max_words=overlap_max_words,
+        )
+        chunks.extend(split_chunks)
+        chunk_index += len(split_chunks)
     return chunks

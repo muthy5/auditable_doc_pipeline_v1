@@ -1,205 +1,76 @@
 # auditable_doc_pipeline_v1
 
-A concrete v1 repository skeleton for an auditable, chunked document-analysis pipeline.
-
-The pipeline is designed for long documents (for example, ~9,000 words) where you want to:
-- surface missing information
-- expose hidden assumptions
-- detect dependency gaps
-- organize the material into a structured final answer
-- prevent unsupported claims from appearing in the output
-
-## What this repo includes
-
-- file layout for the pipeline
-- Python skeleton with a runnable CLI
-- pass runner
-- JSON schemas
-- mechanical validation logic
-- prompt templates
-- a rule-based demo backend
-- an example document (`examples/lemonade_plan_missing_juicing.txt`)
-
-## Important scope note
-
-This is a **v1 implementation skeleton**, not a production-grade reasoning engine.
-
-It is designed to:
-1. make the architecture concrete
-2. make every pass auditable
-3. give you a local control layer you can later connect to a real local model
-
-The included `RuleBasedDemoBackend` is intentionally simple. It can demonstrate the pipeline on basic procedural documents and can catch obvious omissions such as a lemonade plan that never includes a juicing step.
+Auditable, chunked document-analysis pipeline with schema-validated multi-pass outputs.
 
 ## Repository layout
 
 ```text
 auditable_doc_pipeline_v1/
   README.md
+  CONTRIBUTING.md
+  Makefile
   requirements.txt
-  .gitignore
+  ruff.toml
   examples/
-    lemonade_plan_missing_juicing.txt
   prompts/
-    00_normalize_request.txt
-    01_extract_chunk.txt
-    03_schema_audit.txt
-    04_dependency_audit.txt
-    05_assumption_audit.txt
-    06_evidence_audit.txt
-    07_synthesize.txt
   schemas/
-    document.schema.json
-    chunk.schema.json
-    00_normalize_request.schema.json
-    01_extract_chunk.schema.json
-    02_merge_global.schema.json
-    03_schema_audit.schema.json
-    04_dependency_audit.schema.json
-    05_assumption_audit.schema.json
-    06_evidence_audit.schema.json
-    07_synthesize.schema.json
-    08_validate_final.schema.json
   runs/
   src/
-    __init__.py
+    __main__.py
     cli.py
-    config.py
     chunker.py
+    config.py
+    exceptions.py
     llm_interface.py
+    markdown_writer.py
     merge_engine.py
+    ollama_backend.py
     pass_runner.py
     pipeline.py
     prompts.py
+    report.py
+    retry.py
+    run_inspector.py
     schemas.py
     validators.py
-    markdown_writer.py
+  tests/
 ```
 
 ## Quick start
 
-Create a virtual environment and install requirements:
+```bash
+make setup
+make test
+python -m src --input examples/lemonade_plan_missing_juicing.txt --backend demo --runs-dir runs
+```
+
+## CLI features
+
+- `--strict`: stop on first schema-validation failure.
+- `--dry-run`: print pass order/backend plan only; no execution.
+- `--resume`: resume existing run (`--run-dir`) from first incomplete pass.
+- `--verbose`: set logging level to DEBUG.
+- `--quiet`: set logging level to ERROR.
+
+## Ollama usage
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+make run-ollama
 ```
 
-Run the example:
+## Run outputs
+
+Each run writes:
+
+- `timing.json`: per-pass and total timing.
+- `report.json`: run metadata, pass status, gap/claim counters, schema failures.
+- `logs/run.log`: run logs.
+- `final/final_answer.json` and `.md`.
+
+## Run inspector
 
 ```bash
-python -m src.cli   --input examples/lemonade_plan_missing_juicing.txt   --runs-dir runs   --backend demo
+python -m src.run_inspector --run-dir runs/<RUN_ID>
 ```
 
-To use Ollama instead, set `--backend ollama` and provide `--ollama-model`.
-Optional flags: `--ollama-base-url`, `--ollama-timeout-s`, `--ollama-temperature`,
-`--ollama-num-predict`, and `--ollama-max-retries`.
-
-The command will create a timestamped run directory under `runs/` and write:
-
-```text
-runs/<RUN_ID>/
-  input/
-    document.json
-    chunks.json
-  passes/
-    00_normalize_request.json
-    01_extract_chunk/
-      chunk_0001.json
-      ...
-    02_merge_global.json
-    03_schema_audit.json
-    04_dependency_audit.json
-    05_assumption_audit.json
-    06_evidence_audit.json
-    07_synthesize.json
-    08_validate_final.json
-  final/
-    final_answer.json
-    final_answer.md
-  logs/
-    run.log
-```
-
-## Backends
-
-### `demo`
-A rule-based local demo backend. Useful for testing the controller architecture and basic omission detection.
-
-### `ollama`
-A real local model backend via an Ollama server. This backend preserves the same pass sequence,
-schema validation, and run artifact layout as the demo backend.
-
-Prerequisites:
-
-```bash
-# 1) Install Ollama
-curl -fsSL https://ollama.com/install.sh | sh
-
-# 2) Pull a model
-ollama pull llama3.1:8b-instruct-q4_K_M
-
-# 3) Start the local server
-ollama serve
-
-# 4) Verify the server is reachable
-curl http://127.0.0.1:11434/api/tags
-```
-
-Example:
-
-```bash
-python -m src.cli \
-  --input examples/lemonade_plan_missing_juicing.txt \
-  --runs-dir runs \
-  --backend ollama \
-  --ollama-model llama3.1:8b-instruct-q4_K_M \
-  --ollama-base-url http://127.0.0.1:11434
-```
-
-### Model selection guidance
-
-- Larger parameter models (for example, 70B) generally produce better extraction/audit quality, but they require substantially more RAM/VRAM.
-- Use instruct/chat-tuned models. The pipeline expects consistent, structured JSON output, and base models are far less reliable at JSON compliance.
-- Recommended starting points:
-  - Testing and local iteration: `llama3.1:8b-instruct-q4_K_M`
-  - Higher quality: `llama3.1:70b-instruct-q4_K_M` or `mistral-nemo:12b-instruct`
-- Minimum recommendation: an 8B-parameter instruct model. Below that, JSON compliance and pass stability drop significantly.
-- Llama and Mistral are different model families (Meta vs Mistral AI). Either can work for this pipeline; prioritize parameter size and instruct tuning.
-
-### Future backends
-Replace the demo backend with a real local model backend that implements the interface in `src/llm_interface.py`.
-
-## Design invariants
-
-- Every pass returns JSON only.
-- Every pass output is validated against a JSON schema.
-- Final synthesis may only use upstream artifacts.
-- Every substantive output sentence carries support IDs.
-- Blocking gaps must be surfaced explicitly.
-- Unsupported claims fail validation.
-
-## Example behavior
-
-The example lemonade document intentionally omits the step where lemons are juiced.
-
-The demo pipeline should flag that omission in:
-- the schema audit
-- the dependency audit
-- the final answer
-
-## Limitations
-
-- Entity resolution is exact-string only in v1.
-- Contradiction detection is limited.
-- The demo backend uses heuristics, not deep reasoning.
-- Some document types will require domain-specific schema templates and a stronger backend.
-
-## Next upgrade path
-
-1. Replace `RuleBasedDemoBackend` with a real local LLM backend.
-2. Add retrieval over local files.
-3. Add domain-specific schema libraries.
-4. Add stronger contradiction checking.
-5. Add selective re-generation on validation failure.
+Prints pass status, blocking gaps, timing, and final-answer preview.
