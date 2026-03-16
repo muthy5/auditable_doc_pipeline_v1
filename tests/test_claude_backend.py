@@ -87,3 +87,30 @@ def test_generate_json_raises_when_no_text_blocks(monkeypatch: pytest.MonkeyPatc
 
     with pytest.raises(BackendError, match="No text blocks found in Claude response content"):
         backend.generate_json(pass_name="p", prompt_text="x", payload={})
+
+
+def test_compose_prompt_uses_required_field_schema_summary(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setitem(sys.modules, "anthropic", _DummyAnthropicModule())
+    backend = ClaudeAPIBackend(ClaudeBackendConfig(api_key="test-key"))
+
+    schema = {
+        "type": "object",
+        "required": ["doc_id", "status"],
+        "properties": {
+            "doc_id": {"type": "string", "description": "Document identifier"},
+            "status": {"type": "string", "description": "Processing status"},
+            "opt1": {"type": "string"},
+            "opt2": {"type": "string"},
+            "opt3": {"type": "string"},
+            "opt4": {"type": "string"},
+            "opt5": {"type": "string"},
+            "opt6": {"type": "string"},
+        },
+    }
+
+    prompt = backend._compose_prompt("pass", "instructions", {"x": 1}, schema=schema)
+
+    assert "required fields only" in prompt
+    assert "- doc_id (string): Document identifier" in prompt
+    assert "Optional fields omitted from prompt" in prompt

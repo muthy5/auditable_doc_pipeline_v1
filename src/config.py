@@ -6,9 +6,9 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class PipelineConfig:
-    chunk_target_min_words: int = 900
-    chunk_target_max_words: int = 1200
-    chunk_hard_max_words: int = 1500
+    chunk_target_min_words: int = 2000
+    chunk_target_max_words: int = 3000
+    chunk_hard_max_words: int = 4000
     chunk_overlap_max_words: int = 120
     encoding: str = "utf-8"
     ollama_base_url: str = "http://127.0.0.1:11434"

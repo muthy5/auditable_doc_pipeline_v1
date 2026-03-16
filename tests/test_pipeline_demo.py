@@ -40,3 +40,16 @@ def test_run_inspector_output(tmp_path: Path) -> None:
     output = inspect_run(run_dir)
     assert "Pass status" in output
     assert "Final answer preview" in output
+
+
+def test_demo_pipeline_fast_mode_skips_noncritical_passes(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    input_path = repo_root / "examples" / "lemonade_plan_missing_juicing.txt"
+    runs_dir = tmp_path / "runs"
+
+    pipeline = AuditablePipeline(repo_root=repo_root, backend_name="demo")
+    run_dir = pipeline.run(input_path=input_path, runs_dir=runs_dir, fast=True)
+
+    assert not (run_dir / "passes" / "05_assumption_audit.json").exists()
+    assert not (run_dir / "passes" / "06_evidence_audit.json").exists()
+    assert (run_dir / "passes" / "07_synthesize.json").exists()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from typing import Any, Dict
 
 from .exceptions import BackendError
@@ -66,11 +67,19 @@ class ClaudeAPIBackend(LocalLLMBackend):
 
         for attempt in range(self.config.max_retries + 1):
             try:
+                call_start = time.perf_counter()
                 response = self._client.messages.create(
                     model=self.config.model,
                     max_tokens=self.config.max_tokens,
                     temperature=self.config.temperature,
                     messages=[{"role": "user", "content": composed_prompt}],
+                )
+                call_elapsed = time.perf_counter() - call_start
+                LOGGER.info(
+                    "Claude API call timing: pass=%s attempt=%d duration_seconds=%.2f",
+                    pass_name,
+                    attempt + 1,
+                    call_elapsed,
                 )
                 text_blocks: list[str] = []
                 for block in response.content:
@@ -117,6 +126,35 @@ class ClaudeAPIBackend(LocalLLMBackend):
             f"for pass '{pass_name}': {last_error}"
         ) from last_error
 
+    def _summarize_schema_required_fields(self, schema: Dict[str, Any]) -> str:
+        """Build a compact schema summary focused on required fields."""
+        required = schema.get("required", []) if isinstance(schema, dict) else []
+        properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
+        optional_count = max(0, len(properties) - len(required)) if isinstance(properties, dict) else 0
+
+        if not required or not isinstance(properties, dict):
+            return json.dumps(schema, ensure_ascii=False, indent=2)
+
+        required_lines: list[str] = []
+        for field in required:
+            field_schema = properties.get(field, {}) if isinstance(field, str) else {}
+            field_type = field_schema.get("type", "any") if isinstance(field_schema, dict) else "any"
+            field_desc = field_schema.get("description", "") if isinstance(field_schema, dict) else ""
+            if isinstance(field_type, list):
+                field_type = " | ".join(str(item) for item in field_type)
+            line = f"- {field} ({field_type})"
+            if field_desc:
+                line += f": {field_desc}"
+            required_lines.append(line)
+
+        if optional_count >= 5:
+            return (
+                "Schema summary (required fields only due to many optional fields):\n"
+                + "\n".join(required_lines)
+                + f"\nOptional fields omitted from prompt: {optional_count}."
+            )
+        return json.dumps(schema, ensure_ascii=False, indent=2)
+
     def _compose_prompt(
         self,
         pass_name: str,
@@ -136,7 +174,7 @@ class ClaudeAPIBackend(LocalLLMBackend):
             parts.extend(
                 [
                     "Your output MUST conform to this JSON schema:",
-                    json.dumps(schema, ensure_ascii=False, indent=2),
+                    self._summarize_schema_required_fields(schema),
                 ]
             )
         parts.extend(

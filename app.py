@@ -255,8 +255,9 @@ def _render_results(run_dir: Path) -> None:
     )
 
 
-def _run_pipeline(pipeline: AuditablePipeline, input_path: Path, temp_root: Path, user_goal: str, strict_mode: bool, document_type_choice: str) -> tuple[Path | None, Exception | None]:
+def _run_pipeline(pipeline: AuditablePipeline, input_path: Path, temp_root: Path, user_goal: str, strict_mode: bool, document_type_choice: str, fast_mode: bool = False, parallel_chunks: int | None = None) -> tuple[Path | None, Exception | None]:
     result: dict[str, Path | Exception | None] = {"run_dir": None, "error": None}
+    chunk_progress: dict[str, int] = {"current": 0, "total": 0}
 
     def _execute_pipeline() -> None:
         try:
@@ -266,6 +267,9 @@ def _run_pipeline(pipeline: AuditablePipeline, input_path: Path, temp_root: Path
                 user_goal=user_goal,
                 strict=strict_mode,
                 document_type=document_type_choice,
+                fast=fast_mode,
+                parallel_chunks=parallel_chunks,
+                progress_callback=lambda current, total: chunk_progress.update({"current": current, "total": total}),
             )
             result["run_dir"] = run_dir
         except Exception as exc:  # noqa: BLE001 - surfaced to Streamlit users
@@ -293,8 +297,32 @@ def _run_pipeline(pipeline: AuditablePipeline, input_path: Path, temp_root: Path
 
         completed = sum(1 for done in pass_completion.values() if done)
         current = PASS_SEQUENCE[min(completed, len(PASS_SEQUENCE) - 1)]
-        progress.progress(completed / len(PASS_SEQUENCE), text=f"Running {current}...")
-        status_placeholder.info(f"Completed {completed}/{len(PASS_SEQUENCE)} passes")
+        current_pass_index = PASS_SEQUENCE.index("01_extract_chunk") if "01_extract_chunk" in PASS_SEQUENCE else 0
+        overall_progress = completed / len(PASS_SEQUENCE)
+        chunk_total = chunk_progress.get("total", 0)
+        chunk_current = chunk_progress.get("current", 0)
+        if chunk_total > 0:
+            overall_progress = max(overall_progress, (current_pass_index + (chunk_current / max(chunk_total, 1))) / len(PASS_SEQUENCE))
+            progress.progress(overall_progress, text=f"Running {current}... Processing chunk {chunk_current} of {chunk_total}")
+            status_placeholder.info(f"Completed {completed}/{len(PASS_SEQUENCE)} passes • Processing chunk {chunk_current} of {chunk_total}")
+        else:
+            # fallback to filesystem-based chunk progress when callback has not fired yet
+            chunk_files = 0
+            chunk_estimated_total = 0
+            if run_dirs:
+                chunks_path = run_dirs[-1].parent / "input" / "chunks.json"
+                if chunks_path.exists():
+                    chunk_estimated_total = len(json.loads(chunks_path.read_text(encoding="utf-8")))
+                extract_dir = run_dirs[-1] / "01_extract_chunk"
+                if extract_dir.exists():
+                    chunk_files = len(list(extract_dir.glob("*.json")))
+            if chunk_estimated_total > 0 and chunk_files < chunk_estimated_total:
+                overall_progress = max(overall_progress, (current_pass_index + (chunk_files / max(chunk_estimated_total, 1))) / len(PASS_SEQUENCE))
+                progress.progress(overall_progress, text=f"Running {current}... Processing chunk {chunk_files} of {chunk_estimated_total}")
+                status_placeholder.info(f"Completed {completed}/{len(PASS_SEQUENCE)} passes • Processing chunk {chunk_files} of {chunk_estimated_total}")
+            else:
+                progress.progress(overall_progress, text=f"Running {current}...")
+                status_placeholder.info(f"Completed {completed}/{len(PASS_SEQUENCE)} passes")
         time.sleep(0.25)
 
     thread.join()
@@ -334,6 +362,8 @@ def main() -> None:
             ollama_model = st.text_input("Ollama model name", value="")
 
         strict_mode = st.toggle("Strict mode", value=False)
+        fast_mode = st.toggle("Fast mode", value=(backend == "claude"), help="Use larger chunks, process chunks in parallel, and skip passes 05/06.")
+        parallel_chunks = st.number_input("Parallel chunks", min_value=1, max_value=16, value=4 if backend == "claude" else 1, step=1)
         enable_search = st.toggle("Web Search", value=False)
         brave_api_key = ""
         if enable_search:
@@ -397,7 +427,7 @@ def main() -> None:
             )
 
             pipeline = AuditablePipeline(repo_root=Path(__file__).parent, backend_name=backend, config=config)
-            run_dir, error = _run_pipeline(pipeline, input_path, temp_root, user_goal, strict_mode, document_type_choice)
+            run_dir, error = _run_pipeline(pipeline, input_path, temp_root, user_goal, strict_mode, document_type_choice, fast_mode=fast_mode, parallel_chunks=int(parallel_chunks))
             if error or run_dir is None:
                 return
             _render_results(run_dir)
