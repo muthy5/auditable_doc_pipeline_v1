@@ -1,0 +1,14 @@
+{
+  "document_type": "legal_contract",
+  "expected_sections": [
+    "parties",
+    "definitions",
+    "terms",
+    "obligations",
+    "payment",
+    "termination",
+    "dispute resolution",
+    "governing law",
+    "signatures"
+  ]
+}

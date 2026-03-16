@@ -19,6 +19,7 @@ from app_utils import (
 )
 from src.config import PipelineConfig
 from src.pipeline import AuditablePipeline
+from src.document_classifier import SUPPORTED_DOCUMENT_TYPES
 
 st.set_page_config(page_title="Auditable Document Pipeline", page_icon="📄", layout="wide")
 st.title("Auditable Document Pipeline")
@@ -54,6 +55,9 @@ with st.sidebar:
         value="Identify missing information and organize the document into an actionable structure.",
         height=140,
     )
+
+    document_type_options = ["auto", *sorted(SUPPORTED_DOCUMENT_TYPES)]
+    document_type_choice = st.selectbox("Document type", document_type_options, index=0)
 
 uploaded_file = st.file_uploader("Upload a .txt file", type=["txt"])
 run_clicked = st.button("Run Pipeline", type="primary", disabled=uploaded_file is None)
@@ -104,6 +108,7 @@ if run_clicked:
                             runs_dir=temp_root / "runs",
                             user_goal=user_goal,
                             strict=strict_mode,
+                            document_type=document_type_choice,
                         )
                         result["run_dir"] = run_dir
                     except Exception as exc:  # noqa: BLE001 - surfaced to Streamlit users
@@ -155,6 +160,12 @@ if run_clicked:
                         final_markdown = read_final_markdown(run_dir)
 
                         st.subheader("Results")
+                        detected_type = "unknown"
+                        classification_path = run_dir / "passes" / "classify_document.json"
+                        if classification_path.exists():
+                            classification_payload = json.loads(classification_path.read_text(encoding="utf-8"))
+                            detected_type = str(classification_payload.get("selected_document_type") or classification_payload.get("document_type") or "unknown")
+                        st.caption(f"Detected document type: `{detected_type}`")
                         summary_tab, plan_tab = st.tabs(["Final Answer", "Generated Plan"])
 
                         with summary_tab:

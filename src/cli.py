@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 
 from .config import PipelineConfig
+from .document_classifier import SUPPORTED_DOCUMENT_TYPES
 from .pipeline import AuditablePipeline
 
 _OLLAMA_MODEL_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
@@ -52,6 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--doc-id", default="doc_001", help="Document ID.")
     parser.add_argument("--title", default=None, help="Optional document title.")
     parser.add_argument("--goal", default="Identify missing information and organize the document into an actionable structure.")
+    parser.add_argument("--document-type", default="auto", choices=["auto", *sorted(SUPPORTED_DOCUMENT_TYPES)], help="Document type to audit against, or auto to classify.")
     parser.add_argument("--ollama-base-url", default="http://127.0.0.1:11434", type=_parse_ollama_base_url)
     parser.add_argument("--ollama-model", default="", type=_parse_ollama_model)
     parser.add_argument("--ollama-timeout-s", default=120.0, type=float)
@@ -116,6 +118,7 @@ def main() -> None:
         title=args.title,
         user_goal=args.goal,
         strict=args.strict,
+        document_type=args.document_type,
     )
     print(run_dir)
 

@@ -1,0 +1,13 @@
+{
+  "document_type": "business_plan",
+  "expected_sections": [
+    "executive summary",
+    "market analysis",
+    "financial projections",
+    "operations plan",
+    "marketing strategy",
+    "team",
+    "timeline",
+    "risks"
+  ]
+}

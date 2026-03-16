@@ -1,0 +1,13 @@
+{
+  "document_type": "medical_protocol",
+  "expected_sections": [
+    "indication",
+    "patient selection",
+    "procedure steps",
+    "dosing",
+    "monitoring",
+    "adverse events",
+    "contraindications",
+    "follow-up"
+  ]
+}

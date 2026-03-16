@@ -1,0 +1,13 @@
+{
+  "document_type": "technical_spec",
+  "expected_sections": [
+    "overview",
+    "requirements",
+    "architecture",
+    "interfaces",
+    "data model",
+    "security",
+    "testing",
+    "deployment"
+  ]
+}
