@@ -78,6 +78,14 @@ def main() -> None:
         level = logging.ERROR
     logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
+    execution_plan = [
+        {"pass": name, "order": i + 1, "backend": args.backend}
+        for i, (name, _, _) in enumerate(AuditablePipeline.PASS_SEQUENCE)
+    ]
+    if args.dry_run:
+        print(json.dumps(execution_plan, indent=2))
+        return
+
     config = PipelineConfig(
         ollama_base_url=args.ollama_base_url,
         ollama_model=args.ollama_model,
@@ -90,10 +98,6 @@ def main() -> None:
     )
     repo_root = Path(__file__).resolve().parents[1]
     pipeline = AuditablePipeline(repo_root=repo_root, backend_name=args.backend, config=config)
-
-    if args.dry_run:
-        print(json.dumps(pipeline.build_execution_plan(args.backend), indent=2))
-        return
 
     explicit_run_dir = Path(args.run_dir) if args.run_dir else None
     run_dir = pipeline.run(

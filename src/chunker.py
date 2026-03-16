@@ -80,21 +80,27 @@ def _split_section_by_paragraphs(
     overlap_max_words: int,
 ) -> list[dict[str, Any]]:
     """Split a section into paragraph-based chunks with overlap metadata."""
-    paragraphs = [p for p in re.split(r"\n\s*\n", section.text) if p.strip()] or [section.text]
+    paragraph_spans = [
+        (match.start(), match.end(), match.group(0))
+        for match in re.finditer(r"(?s)\S.*?(?=(?:\n\s*\n)|\Z)", section.text)
+        if match.group(0).strip()
+    ] or [(0, len(section.text), section.text)]
 
     chunks: list[dict[str, Any]] = []
-    buffer: list[str] = []
+    buffer: list[tuple[int, int, str]] = []
     chunk_index = start_index
-    cursor = section.start_char
 
     def flush() -> None:
         nonlocal buffer, chunk_index
         if not buffer:
             return
-        chunk_text = "\n\n".join(buffer).strip()
+
+        first_start = buffer[0][0]
+        last_end = buffer[-1][1]
+        chunk_text = "\n\n".join(paragraph_text.strip() for _, _, paragraph_text in buffer).strip()
         word_count = len(chunk_text.split())
-        end_char = cursor
-        start_char = max(section.start_char, end_char - len(chunk_text))
+        start_char = section.start_char + first_start
+        end_char = section.start_char + last_end
         chunks.append(
             {
                 "chunk_id": f"chunk_{chunk_index:04d}",
@@ -113,16 +119,14 @@ def _split_section_by_paragraphs(
         chunk_index += 1
         buffer = []
 
-    for para in paragraphs:
+    for para_start, para_end, para in paragraph_spans:
         para_words = len(para.split())
-        existing_words = len(" ".join(buffer).split()) if buffer else 0
+        existing_words = len(" ".join(item[2] for item in buffer).split()) if buffer else 0
         if buffer and existing_words + para_words > hard_max_words:
             flush()
-        buffer.append(para)
-        cursor += len(para)
-        if len(" ".join(buffer).split()) >= target_min_words:
+        buffer.append((para_start, para_end, para))
+        if len(" ".join(item[2] for item in buffer).split()) >= target_min_words:
             flush()
-        cursor += 2
     flush()
 
     for idx in range(1, len(chunks)):

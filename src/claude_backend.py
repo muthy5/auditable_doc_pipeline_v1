@@ -72,7 +72,19 @@ class ClaudeAPIBackend(LocalLLMBackend):
                     temperature=self.config.temperature,
                     messages=[{"role": "user", "content": composed_prompt}],
                 )
-                raw_text = response.content[0].text
+                text_blocks: list[str] = []
+                for block in response.content:
+                    block_type = getattr(block, "type", None)
+                    if block_type is None and isinstance(block, dict):
+                        block_type = block.get("type")
+                    if block_type != "text":
+                        continue
+                    block_text = getattr(block, "text", None)
+                    if block_text is None and isinstance(block, dict):
+                        block_text = block.get("text")
+                    if isinstance(block_text, str):
+                        text_blocks.append(block_text)
+                raw_text = "".join(text_blocks)
                 parsed = self._extract_json_object(raw_text)
                 if not isinstance(parsed, dict):
                     raise BackendError("Parsed JSON is not an object.")
