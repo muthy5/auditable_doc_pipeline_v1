@@ -84,6 +84,8 @@ class ClaudeAPIBackend(LocalLLMBackend):
                         block_text = block.get("text")
                     if isinstance(block_text, str):
                         text_blocks.append(block_text)
+                if not text_blocks:
+                    raise BackendError("No text blocks found in Claude response content.")
                 raw_text = "".join(text_blocks)
                 parsed = self._extract_json_object(raw_text)
                 if not isinstance(parsed, dict):
