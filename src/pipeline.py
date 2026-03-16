@@ -104,6 +104,7 @@ class AuditablePipeline:
         resume: bool = False,
     ) -> Path:
         """Execute the full pipeline and return the run directory."""
+        self.pass_runner.validation_failures.clear()
         start_total = time.perf_counter()
         run_id = run_dir.name if run_dir else utc_run_id()
         run_dir = run_dir or (runs_dir / run_id)
