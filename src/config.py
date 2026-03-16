@@ -17,6 +17,8 @@ class PipelineConfig:
     ollama_temperature: float = 0.0
     ollama_num_predict: int = 2048
     ollama_max_retries: int = 2
+    claude_api_key: str = ""
+    claude_model: str = "claude-sonnet-4-20250514"
 
 
 @dataclass(frozen=True)

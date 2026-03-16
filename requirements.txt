@@ -1,4 +1,5 @@
 jsonschema>=4.21.0
+anthropic>=0.39.0
 # Ollama backend uses Python stdlib urllib; no extra runtime dependency required.
 pytest>=8.0.0
 requests>=2.31.0
