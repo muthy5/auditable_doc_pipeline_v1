@@ -1,0 +1,2 @@
+# Pass 02 (merge_global) is deterministic and programmatic in this repository.
+# It does not call an LLM; merge logic is implemented in src/merge_engine.py.

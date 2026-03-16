@@ -1,0 +1,2 @@
+# Pass 08 (validate_final) is deterministic and programmatic in this repository.
+# It does not call an LLM; validation logic is implemented in src/validators.py.

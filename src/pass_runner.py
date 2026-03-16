@@ -1,14 +1,25 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, Dict
 
 from jsonschema import Draft202012Validator
+from jsonschema.exceptions import ValidationError
 
 from .llm_interface import LocalLLMBackend
 from .prompts import load_prompt
 from .schemas import load_schema
+
+
+LOGGER = logging.getLogger(__name__)
+
+
+class PassSchemaValidationError(Exception):
+    def __init__(self, pass_name: str, message: str) -> None:
+        super().__init__(message)
+        self.pass_name = pass_name
 
 
 class PassRunner:
@@ -16,6 +27,29 @@ class PassRunner:
         self.backend = backend
         self.prompts_dir = prompts_dir
         self.schemas_dir = schemas_dir
+        self.validation_failures: list[str] = []
+
+    def _handle_schema_failure(
+        self,
+        pass_name: str,
+        payload: Dict[str, Any],
+        output_path: Path,
+        error: ValidationError,
+        strict: bool,
+    ) -> None:
+        failed_path = output_path.with_suffix(".failed.json")
+        failed_path.parent.mkdir(parents=True, exist_ok=True)
+        failed_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        message = (
+            f"Schema validation failed in pass '{pass_name}': {error.message}. "
+            f"Failed output written to {failed_path}."
+        )
+        LOGGER.error(message)
+        self.validation_failures.append(message)
+        if strict:
+            raise PassSchemaValidationError(pass_name=pass_name, message=message) from error
+        LOGGER.warning("Continuing because strict mode is disabled.")
 
     def validate_with_schema(self, schema_filename: str, payload: Dict[str, Any]) -> None:
         schema = load_schema(self.schemas_dir, schema_filename)
@@ -28,13 +62,24 @@ class PassRunner:
         schema_filename: str,
         input_payload: Dict[str, Any],
         output_path: Path,
+        strict: bool = True,
     ) -> Dict[str, Any]:
         prompt_text = load_prompt(self.prompts_dir, prompt_filename)
         schema = load_schema(self.schemas_dir, schema_filename)
         output = self.backend.generate_json(
             pass_name=pass_name, prompt_text=prompt_text, payload=input_payload, schema=schema
         )
-        Draft202012Validator(schema).validate(output)
+        try:
+            Draft202012Validator(schema).validate(output)
+        except ValidationError as error:
+            self._handle_schema_failure(
+                pass_name=pass_name,
+                payload=output,
+                output_path=output_path,
+                error=error,
+                strict=strict,
+            )
+            return output
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(output, indent=2, ensure_ascii=False), encoding="utf-8")
         return output
@@ -44,8 +89,21 @@ class PassRunner:
         schema_filename: str,
         payload: Dict[str, Any],
         output_path: Path,
+        pass_name: str,
+        strict: bool = True,
     ) -> Dict[str, Any]:
-        self.validate_with_schema(schema_filename=schema_filename, payload=payload)
+        schema = load_schema(self.schemas_dir, schema_filename)
+        try:
+            Draft202012Validator(schema).validate(payload)
+        except ValidationError as error:
+            self._handle_schema_failure(
+                pass_name=pass_name,
+                payload=payload,
+                output_path=output_path,
+                error=error,
+                strict=strict,
+            )
+            return payload
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
         return payload

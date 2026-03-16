@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+import logging
 from pathlib import Path
-from typing import Any, Dict
 
 from .chunker import chunk_document
 from .config import PipelineConfig, RepoPaths
@@ -14,6 +14,9 @@ from .merge_engine import merge_chunk_extractions
 from .pass_runner import PassRunner
 from .schemas import load_schema
 from .validators import validate_chunks, validate_final_output
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def utc_run_id() -> str:
@@ -52,6 +55,7 @@ class AuditablePipeline:
         title: str | None = None,
         user_goal: str = "Identify missing information and organize the document into an actionable structure.",
         requested_deliverable: str = "structured_gap_analysis_and_plan",
+        strict: bool = False,
     ) -> Path:
         run_id = utc_run_id()
         run_dir = runs_dir / run_id
@@ -64,6 +68,13 @@ class AuditablePipeline:
         passes_dir.mkdir(parents=True, exist_ok=True)
         final_dir.mkdir(parents=True, exist_ok=True)
         logs_dir.mkdir(parents=True, exist_ok=True)
+
+        self.pass_runner.validation_failures.clear()
+
+        def _warn_if_failed(pass_name: str, output_path: Path) -> None:
+            failed_output_path = output_path.with_suffix(".failed.json")
+            if failed_output_path.exists():
+                LOGGER.warning("Pass %s failed schema validation; continuing with failed artifact due to non-strict mode.", pass_name)
 
         text = input_path.read_text(encoding=self.config.encoding)
         document = {
@@ -80,7 +91,6 @@ class AuditablePipeline:
             },
         }
 
-        document_schema = load_schema(self.repo_paths.schemas_dir, "document.schema.json")
         self.pass_runner.validate_with_schema("document.schema.json", document)
         (input_dir / "document.json").write_text(json.dumps(document, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -112,6 +122,7 @@ class AuditablePipeline:
             schema_filename="00_normalize_request.schema.json",
             input_payload=normalize_input,
             output_path=passes_dir / "00_normalize_request.json",
+            strict=strict,
         )
 
         extraction_dir = passes_dir / "01_extract_chunk"
@@ -123,6 +134,7 @@ class AuditablePipeline:
                 schema_filename="01_extract_chunk.schema.json",
                 input_payload={"task": normalize, "chunk": chunk},
                 output_path=extraction_dir / f"{chunk['chunk_id']}.json",
+                strict=strict,
             )
             chunk_extractions.append(extraction)
 
@@ -131,7 +143,10 @@ class AuditablePipeline:
             schema_filename="02_merge_global.schema.json",
             payload=merge,
             output_path=passes_dir / "02_merge_global.json",
+            pass_name="02_merge_global",
+            strict=strict,
         )
+        _warn_if_failed("02_merge_global", passes_dir / "02_merge_global.json")
 
         chunk_summaries = [
             {"chunk_id": item["chunk_id"], "section_role": item["section_role"]}
@@ -144,7 +159,9 @@ class AuditablePipeline:
             schema_filename="03_schema_audit.schema.json",
             input_payload={"task": normalize, "merge": merge, "chunk_summaries": chunk_summaries},
             output_path=passes_dir / "03_schema_audit.json",
+            strict=strict,
         )
+        _warn_if_failed("03_schema_audit", passes_dir / "03_schema_audit.json")
 
         dependency_audit = self.pass_runner.run_model_pass(
             pass_name="04_dependency_audit",
@@ -152,7 +169,9 @@ class AuditablePipeline:
             schema_filename="04_dependency_audit.schema.json",
             input_payload={"task": normalize, "merge": merge, "schema_audit": schema_audit},
             output_path=passes_dir / "04_dependency_audit.json",
+            strict=strict,
         )
+        _warn_if_failed("04_dependency_audit", passes_dir / "04_dependency_audit.json")
 
         assumption_audit = self.pass_runner.run_model_pass(
             pass_name="05_assumption_audit",
@@ -165,7 +184,9 @@ class AuditablePipeline:
                 "dependency_audit": dependency_audit,
             },
             output_path=passes_dir / "05_assumption_audit.json",
+            strict=strict,
         )
+        _warn_if_failed("05_assumption_audit", passes_dir / "05_assumption_audit.json")
 
         evidence_audit = self.pass_runner.run_model_pass(
             pass_name="06_evidence_audit",
@@ -178,7 +199,9 @@ class AuditablePipeline:
                 "assumption_audit": assumption_audit,
             },
             output_path=passes_dir / "06_evidence_audit.json",
+            strict=strict,
         )
+        _warn_if_failed("06_evidence_audit", passes_dir / "06_evidence_audit.json")
 
         synthesis = self.pass_runner.run_model_pass(
             pass_name="07_synthesize",
@@ -193,7 +216,9 @@ class AuditablePipeline:
                 "evidence_audit": evidence_audit,
             },
             output_path=passes_dir / "07_synthesize.json",
+            strict=strict,
         )
+        _warn_if_failed("07_synthesize", passes_dir / "07_synthesize.json")
 
         validation = validate_final_output(
             synthesis=synthesis,
@@ -208,7 +233,10 @@ class AuditablePipeline:
             schema_filename="08_validate_final.schema.json",
             payload=validation,
             output_path=passes_dir / "08_validate_final.json",
+            pass_name="08_validate_final",
+            strict=strict,
         )
+        _warn_if_failed("08_validate_final", passes_dir / "08_validate_final.json")
 
         (final_dir / "final_answer.json").write_text(json.dumps(synthesis, indent=2, ensure_ascii=False), encoding="utf-8")
         (final_dir / "final_answer.md").write_text(render_final_answer_markdown(synthesis), encoding="utf-8")
@@ -219,6 +247,7 @@ class AuditablePipeline:
             f"validation_pass={validation['pass']}",
             f"errors={len(validation['errors'])}",
             f"warnings={len(validation['warnings'])}",
+            f"schema_validation_failures={len(self.pass_runner.validation_failures)}",
         ]
         (logs_dir / "run.log").write_text("\n".join(run_log) + "\n", encoding="utf-8")
 
