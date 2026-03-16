@@ -121,10 +121,14 @@ class AuditablePipeline:
         queries = query_output.get("queries", [])
         return [q for q in queries if isinstance(q, str) and q.strip()]
 
-    def _build_web_context(self, normalize: dict[str, Any], document_text: str) -> list[dict[str, Any]]:
+    def _build_web_context(self, normalize: dict[str, Any], document_text: str, strict: bool = False) -> list[dict[str, Any]]:
         """Generate queries and execute Brave searches for each query."""
-        if not (self.config.enable_search and self.config.brave_api_key):
+        if not self.config.enable_search:
             return []
+        if not self.config.brave_api_key:
+            raise PipelineError(
+                "Web search is enabled but no Brave API key was provided. Set --brave-api-key or BRAVE_API_KEY environment variable."
+            )
         try:
             client = BraveSearchClient(api_key=self.config.brave_api_key)
             queries = self._generate_search_queries(normalize, document_text)
@@ -132,7 +136,9 @@ class AuditablePipeline:
             for query in queries:
                 web_context.append({"query": query, "results": client.search(query)})
             return web_context
-        except Exception as exc:  # noqa: BLE001 - search enrichment should not fail pipeline
+        except Exception as exc:  # noqa: BLE001 - strict mode controls whether search failures are fatal
+            if strict:
+                raise
             LOGGER.warning("Web search enrichment skipped due to error: %s", exc)
             return []
 
@@ -299,7 +305,7 @@ class AuditablePipeline:
             if resume and web_context_output.exists():
                 web_context = json.loads(web_context_output.read_text(encoding="utf-8")).get("web_context", [])
             else:
-                web_context = self._build_web_context(normalize=normalize, document_text=text)
+                web_context = self._build_web_context(normalize=normalize, document_text=text, strict=strict)
                 if web_context:
                     web_context_output.write_text(json.dumps({"web_context": web_context}, indent=2, ensure_ascii=False), encoding="utf-8")
 
