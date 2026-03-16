@@ -6,6 +6,18 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Dict
 
+try:
+    import requests
+except ImportError:  # pragma: no cover
+    class _RequestsExceptions:
+        RequestException = Exception
+
+    class _RequestsModule:
+        exceptions = _RequestsExceptions()
+
+    requests = _RequestsModule()
+
+from .exceptions import BackendError
 from .llm_interface import LocalLLMBackend
 
 
@@ -20,7 +32,9 @@ class OllamaBackendConfig:
 
 
 class OllamaResponseError(RuntimeError):
-    pass
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class OllamaLocalBackend(LocalLLMBackend):
@@ -29,6 +43,10 @@ class OllamaLocalBackend(LocalLLMBackend):
             raise ValueError("Ollama model name must be provided.")
         self.config = config
 
+    def _is_permanent_error(self, error: OllamaResponseError) -> bool:
+        status_code = error.status_code
+        return status_code is not None and 400 <= status_code < 500 and status_code not in {408, 429}
+
     def generate_json(
         self,
         pass_name: str,
@@ -36,23 +54,33 @@ class OllamaLocalBackend(LocalLLMBackend):
         payload: Dict[str, Any],
         schema: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
-        try:
-            composed_prompt = self._compose_prompt(
-                pass_name=pass_name, prompt_text=prompt_text, payload=payload, schema=schema
-            )
-            last_error: Exception | None = None
-            for _attempt in range(self.config.max_retries + 1):
-                try:
-                    raw_text = self._call_ollama(prompt=composed_prompt)
-                    parsed = self._extract_json_object(raw_text)
-                    if not isinstance(parsed, dict):
-                        raise OllamaResponseError("Parsed JSON is not an object.")
-                    return parsed
-                except Exception as exc:  # noqa: BLE001
-                    last_error = exc
-            raise OllamaResponseError(f"Failed to produce valid JSON after retries: {last_error}")
-        except OllamaResponseError as exc:
-            raise ValueError(str(exc)) from exc
+        composed_prompt = self._compose_prompt(
+            pass_name=pass_name, prompt_text=prompt_text, payload=payload, schema=schema
+        )
+        last_error: Exception | None = None
+        retryable_errors = (
+            OllamaResponseError,
+            json.JSONDecodeError,
+            ConnectionError,
+            TimeoutError,
+            requests.exceptions.RequestException,
+        )
+
+        for _attempt in range(self.config.max_retries + 1):
+            try:
+                raw_text = self._call_ollama(prompt=composed_prompt)
+                parsed = self._extract_json_object(raw_text)
+                if not isinstance(parsed, dict):
+                    raise OllamaResponseError("Parsed JSON is not an object.")
+                return parsed
+            except OllamaResponseError as exc:
+                if self._is_permanent_error(exc):
+                    raise BackendError(f"Permanent Ollama error: {exc}") from exc
+                last_error = exc
+            except retryable_errors as exc:
+                last_error = exc
+
+        raise BackendError(f"Failed to produce valid JSON after retries: {last_error}") from last_error
 
     def _compose_prompt(
         self,
@@ -97,6 +125,8 @@ class OllamaLocalBackend(LocalLLMBackend):
         try:
             with urllib.request.urlopen(req, timeout=self.config.timeout_s) as response:
                 raw = response.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            raise OllamaResponseError(f"Ollama HTTP error {exc.code}: {exc.reason}", status_code=exc.code) from exc
         except urllib.error.URLError as exc:
             raise OllamaResponseError(f"Failed to connect to Ollama at {url}: {exc}") from exc
 
@@ -152,4 +182,3 @@ class OllamaLocalBackend(LocalLLMBackend):
             return json.loads(candidate)
         except json.JSONDecodeError as exc:
             raise OllamaResponseError(f"Failed to parse extracted JSON object: {exc}") from exc
-

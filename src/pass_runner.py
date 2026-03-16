@@ -55,6 +55,32 @@ class PassRunner:
         schema = load_schema(self.schemas_dir, schema_filename)
         Draft202012Validator(schema).validate(payload)
 
+    def _build_fallback_from_schema(self, schema: dict) -> dict:
+        def _default_for_schema(node: Dict[str, Any]) -> Any:
+            node_type = node.get("type")
+
+            if isinstance(node_type, list):
+                node_type = next((item for item in node_type if item != "null"), node_type[0] if node_type else None)
+
+            if node_type == "object" or "properties" in node:
+                fallback: Dict[str, Any] = {}
+                properties = node.get("properties", {})
+                for key in node.get("required", []):
+                    child_schema = properties.get(key, {})
+                    fallback[key] = _default_for_schema(child_schema)
+                return fallback
+            if node_type == "array":
+                return []
+            if node_type in {"number", "integer"}:
+                return 0
+            if node_type == "boolean":
+                return False
+            if node_type == "string":
+                return ""
+            return {}
+
+        return _default_for_schema(schema)
+
     def run_model_pass(
         self,
         pass_name: str,
@@ -79,7 +105,9 @@ class PassRunner:
                 error=error,
                 strict=strict,
             )
-            return output
+            fallback = self._build_fallback_from_schema(schema)
+            fallback["_schema_validation_failed"] = True
+            return fallback
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(output, indent=2, ensure_ascii=False), encoding="utf-8")
         return output
