@@ -19,6 +19,7 @@ auditable_doc_pipeline_v1/
     __main__.py
     cli.py
     chunker.py
+    claude_backend.py
     config.py
     exceptions.py
     llm_interface.py
@@ -52,11 +53,17 @@ python -m src --input examples/lemonade_plan_missing_juicing.txt --backend demo 
 - `--verbose`: set logging level to DEBUG.
 - `--quiet`: set logging level to ERROR.
 
-## Ollama usage
+## Backends
+
+### ollama
 
 ```bash
 make run-ollama
 ```
+
+### claude
+
+Use the Claude API backend with `--backend claude`. Provide credentials via `--claude-api-key` or the `ANTHROPIC_API_KEY` environment variable. The default model is `claude-sonnet-4-20250514` (override with `--claude-model`).
 
 ## Run outputs
 

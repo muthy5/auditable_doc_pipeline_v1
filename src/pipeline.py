@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .claude_backend import ClaudeAPIBackend, ClaudeBackendConfig
 from .chunker import chunk_document
 from .config import PipelineConfig, RepoPaths
 from .exceptions import PipelineError
@@ -61,6 +62,12 @@ class AuditablePipeline:
             )
             self.backend = OllamaLocalBackend(config=ollama_config)
             self.backend.health_check()
+        elif backend_name == "claude":
+            claude_config = ClaudeBackendConfig(
+                api_key=self.config.claude_api_key,
+                model=self.config.claude_model,
+            )
+            self.backend = ClaudeAPIBackend(config=claude_config)
         else:
             raise ValueError(f"Unsupported backend: {backend_name}")
         self.pass_runner = PassRunner(self.backend, self.repo_paths.prompts_dir, self.repo_paths.schemas_dir)

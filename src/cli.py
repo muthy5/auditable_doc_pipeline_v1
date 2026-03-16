@@ -47,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input", required=True, help="Path to the input text document.")
     parser.add_argument("--runs-dir", default="runs", help="Directory where run artifacts will be written.")
     parser.add_argument("--run-dir", default="", help="Existing run directory (used with --resume).")
-    parser.add_argument("--backend", default="demo", choices=["demo", "ollama"], help="Backend to use.")
+    parser.add_argument("--backend", default="demo", choices=["demo", "ollama", "claude"], help="Backend to use.")
     parser.add_argument("--doc-id", default="doc_001", help="Document ID.")
     parser.add_argument("--title", default=None, help="Optional document title.")
     parser.add_argument("--goal", default="Identify missing information and organize the document into an actionable structure.")
@@ -57,6 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ollama-temperature", default=0.0, type=float)
     parser.add_argument("--ollama-num-predict", default=2048, type=int)
     parser.add_argument("--ollama-max-retries", default=2, type=_parse_ollama_max_retries)
+    parser.add_argument("--claude-api-key", default="")
+    parser.add_argument("--claude-model", default="claude-sonnet-4-20250514")
     parser.add_argument("--strict", action="store_true", help="Halt on first JSON schema validation failure.")
     parser.add_argument("--resume", action="store_true", help="Resume an existing run from first incomplete pass.")
     parser.add_argument("--dry-run", action="store_true", help="Print execution plan and exit.")
@@ -83,6 +85,8 @@ def main() -> None:
         ollama_temperature=args.ollama_temperature,
         ollama_num_predict=args.ollama_num_predict,
         ollama_max_retries=args.ollama_max_retries,
+        claude_api_key=args.claude_api_key,
+        claude_model=args.claude_model,
     )
     repo_root = Path(__file__).resolve().parents[1]
     pipeline = AuditablePipeline(repo_root=repo_root, backend_name=args.backend, config=config)
