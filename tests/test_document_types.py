@@ -25,6 +25,16 @@ def test_document_type_schemas_are_valid_json() -> None:
         assert payload["expected_sections"]
 
 
+def test_procedural_plan_schema_is_domain_neutral() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    payload = json.loads((repo_root / "schemas" / "document_types" / "procedural_plan.json").read_text(encoding="utf-8"))
+
+    expected = payload["expected_sections"]
+    assert "ingredient_preparation" not in expected
+    assert "inputs" in expected
+    assert "constraints" in expected
+
+
 def test_pipeline_runs_with_auto_classification(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     input_path = repo_root / "examples" / "lemonade_plan_missing_juicing.txt"
