@@ -324,15 +324,23 @@ def _render_results(run_dir: Path) -> None:
     )
 
 
+def _persistent_runs_dir() -> Path:
+    """Return a persistent runs directory so incomplete runs survive across sessions."""
+    runs_dir = Path(__file__).parent / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    return runs_dir
+
+
 def _run_pipeline(pipeline: AuditablePipeline, input_path: Path, temp_root: Path, user_goal: str, strict_mode: bool, document_type_choice: str, fast_mode: bool = False, parallel_chunks: int | None = None) -> tuple[Path | None, Exception | None]:
     result: dict[str, Path | Exception | None] = {"run_dir": None, "error": None}
     chunk_progress: dict[str, int] = {"current": 0, "total": 0}
+    persistent_runs = _persistent_runs_dir()
 
     def _execute_pipeline() -> None:
         try:
             run_dir = pipeline.run(
                 input_path=input_path,
-                runs_dir=temp_root / "runs",
+                runs_dir=persistent_runs,
                 user_goal=user_goal,
                 strict=strict_mode,
                 document_type=document_type_choice,
@@ -350,7 +358,7 @@ def _run_pipeline(pipeline: AuditablePipeline, input_path: Path, temp_root: Path
     progress = st.progress(0, text="Starting pipeline...")
     status_placeholder = st.empty()
     pass_completion = {name: False for name in PASS_SEQUENCE}
-    passes_dir = temp_root / "runs"
+    passes_dir = persistent_runs
 
     while thread.is_alive():
         run_dirs = sorted(passes_dir.glob("*/passes")) if passes_dir.exists() else []
