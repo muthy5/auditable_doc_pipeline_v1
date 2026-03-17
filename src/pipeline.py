@@ -252,9 +252,12 @@ class AuditablePipeline:
         root_logger.addHandler(file_handler)
 
         try:
-            text = extract_text_from_path(input_path).strip()
-            if not text:
-                raise PipelineError(f"Unable to extract text from input file: {input_path}")
+            extraction_result = extract_text_from_path(input_path)
+            if not extraction_result.ok:
+                raise PipelineError(
+                    f"Unable to extract text from input file ({extraction_result.error_code}): {extraction_result.error_message}"
+                )
+            text = extraction_result.text.strip()
             document = {
                 "doc_id": doc_id,
                 "title": title,

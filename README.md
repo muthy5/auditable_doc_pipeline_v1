@@ -10,6 +10,7 @@ auditable_doc_pipeline_v1/
   CONTRIBUTING.md
   Makefile
   requirements.txt
+  requirements-dev.txt
   ruff.toml
   examples/
   prompts/
@@ -44,6 +45,18 @@ make setup
 make test
 python -m src --input examples/lemonade_plan_missing_juicing.txt --backend demo --runs-dir runs
 ```
+
+
+## Runtime prerequisites and limitations
+
+- **Scanned/image-only PDFs are not supported** unless OCR is added; these files are explicitly detected and reported as image-only parse failures.
+- PDF parsing depends on optional `pypdf` availability.
+- DOCX parsing depends on optional `python-docx` availability.
+- Claude backend requires both the `anthropic` package and a valid `ANTHROPIC_API_KEY`/`--claude-api-key`.
+- Brave web-search enrichment requires `BRAVE_API_KEY`/`--brave-api-key` when `--enable-search` is set.
+- Ollama backend requires a reachable Ollama server and an installed model matching `--ollama-model`.
+
+The CLI and Streamlit app now run preflight diagnostics for these capabilities and return clear, domain-specific errors before pipeline execution.
 
 ## Supported document types
 
@@ -166,7 +179,7 @@ Prints pass status, blocking gaps, timing, and final-answer preview.
 
 Run the Streamlit interface from the repository root:
 
-Main document uploads accept `.txt`, `.md`, `.pdf`, and `.docx` (text extraction is best-effort for PDF/DOCX based on installed optional dependencies). Reference uploads accept the same file types.
+Main document uploads accept `.txt`, `.md`, `.pdf`, and `.docx`. The app now reports specific extraction failures (missing parser package, unsupported type, unreadable file, image-only PDF, or empty text). Reference uploads accept the same file types.
 
 ```bash
 streamlit run app.py

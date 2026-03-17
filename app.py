@@ -27,7 +27,8 @@ from app_utils import (
 from src.config import PipelineConfig
 from src.document_classifier import SUPPORTED_DOCUMENT_TYPES
 from src.pipeline import AuditablePipeline
-from src.text_extractor import extract_text_from_path
+from src.preflight import CapabilityStatus, run_preflight
+from src.text_extractor import TextExtractionResult, extract_text_from_path
 
 st.set_page_config(page_title="Auditable Document Pipeline", page_icon="📄", layout="wide")
 st.title("Auditable Document Pipeline")
@@ -39,6 +40,39 @@ def _secret_or_env(name: str) -> str:
         return os.environ.get(name, "")
 
 
+
+
+
+def _format_extraction_error(result: TextExtractionResult) -> str:
+    if result.error_code == "missing_pdf_parser":
+        return "PDF parser package missing: install optional dependency 'pypdf'."
+    if result.error_code == "missing_docx_parser":
+        return "DOCX parser package missing: install optional dependency 'python-docx'."
+    if result.error_code == "unsupported_file_type":
+        return "Unsupported file type. Please upload .txt, .md, .pdf, or .docx."
+    if result.error_code == "corrupted_document":
+        return f"Document corrupted or unreadable: {result.error_message}"
+    if result.error_code == "image_only_pdf":
+        return "PDF appears scanned/image-only and has no extractable text (OCR not configured)."
+    if result.error_code == "empty_document":
+        return "File contains no extractable text."
+    return result.error_message or "Failed to parse uploaded document."
+
+
+def _render_capability_status(statuses: dict[str, CapabilityStatus]) -> None:
+    st.subheader("System Status")
+    labels = {
+        "demo_backend": "Demo backend",
+        "claude_backend": "Claude backend",
+        "ollama_backend": "Ollama backend",
+        "pdf_parsing": "PDF parsing",
+        "docx_parsing": "DOCX parsing",
+        "web_search": "Web search",
+    }
+    for key, label in labels.items():
+        status = statuses[key]
+        prefix = "✅" if status.available else "❌"
+        st.caption(f"{prefix} {label}: {status.message}")
 
 def _render_status_banner(status_color: str) -> None:
     if status_color == "red":
@@ -389,6 +423,17 @@ def main() -> None:
         document_type_options = ["auto", *sorted(SUPPORTED_DOCUMENT_TYPES)]
         document_type_choice = st.selectbox("Document type", document_type_options, index=0)
 
+        st.markdown("---")
+        preflight_statuses = run_preflight(
+            backend=backend,
+            enable_search=enable_search,
+            claude_api_key=claude_api_key or default_claude_api_key,
+            brave_api_key=brave_api_key or default_brave_api_key,
+            ollama_base_url=ollama_base_url,
+            ollama_model=ollama_model,
+        )
+        _render_capability_status(preflight_statuses)
+
     uploaded_file = st.file_uploader("Upload main document", type=["txt", "md", "pdf", "docx"])
     run_clicked = st.button("Run Pipeline", type="primary", disabled=uploaded_file is None)
 
@@ -398,14 +443,14 @@ def main() -> None:
     if uploaded_file is None:
         st.error("Please upload a main document (.txt, .md, .pdf, or .docx) before running the pipeline.")
         return
-    if backend == "claude" and not claude_api_key:
-        st.error("Please provide a Claude API key.")
+    if backend == "claude" and not preflight_statuses["claude_backend"].available:
+        st.error(preflight_statuses["claude_backend"].message)
         return
-    if backend == "ollama" and not ollama_model:
-        st.error("Please provide an Ollama model name.")
+    if backend == "ollama" and not preflight_statuses["ollama_backend"].available:
+        st.error(preflight_statuses["ollama_backend"].message)
         return
-    if enable_search and not brave_api_key:
-        st.error("Please provide a Brave API key when Web Search is enabled.")
+    if enable_search and not preflight_statuses["web_search"].available:
+        st.error(preflight_statuses["web_search"].message)
         return
 
     try:
@@ -413,8 +458,9 @@ def main() -> None:
             temp_root = Path(temp_dir)
             input_path = temp_root / uploaded_file.name
             input_path.write_bytes(uploaded_file.getvalue())
-            if not extract_text_from_path(input_path).strip():
-                st.error("The uploaded main document could not be parsed into text. Try a text-based .txt/.md file or install optional PDF/DOCX parsers on the host.")
+            extraction_result = extract_text_from_path(input_path)
+            if not extraction_result.ok:
+                st.error(_format_extraction_error(extraction_result))
                 return
 
             resolved_reference_dir = reference_dir_input.strip()

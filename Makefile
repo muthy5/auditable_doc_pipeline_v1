@@ -2,7 +2,7 @@
 
 setup:
 	python -m venv .venv
-	. .venv/bin/activate && pip install -r requirements.txt
+	. .venv/bin/activate && pip install -r requirements-dev.txt
 
 test:
 	pytest -q

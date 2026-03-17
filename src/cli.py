@@ -10,6 +10,7 @@ from pathlib import Path
 from .config import PipelineConfig
 from .document_classifier import SUPPORTED_DOCUMENT_TYPES
 from .pipeline import AuditablePipeline
+from .preflight import run_preflight
 
 _OLLAMA_MODEL_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
 
@@ -42,6 +43,25 @@ def _parse_ollama_max_retries(value: str) -> int:
         raise argparse.ArgumentTypeError("--ollama-max-retries must be 0 or greater")
     return parsed_value
 
+
+
+
+def _ensure_preflight_or_exit(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    statuses = run_preflight(
+        backend=args.backend,
+        enable_search=args.enable_search,
+        claude_api_key=args.claude_api_key or os.environ.get("ANTHROPIC_API_KEY", ""),
+        brave_api_key=args.brave_api_key or os.environ.get("BRAVE_API_KEY", ""),
+        ollama_base_url=args.ollama_base_url,
+        ollama_model=args.ollama_model,
+        ollama_timeout_s=args.ollama_timeout_s,
+    )
+    if args.backend == "claude" and not statuses["claude_backend"].available:
+        parser.error(statuses["claude_backend"].message)
+    if args.backend == "ollama" and not statuses["ollama_backend"].available:
+        parser.error(statuses["ollama_backend"].message)
+    if args.enable_search and not statuses["web_search"].available:
+        parser.error(statuses["web_search"].message)
 
 def build_parser() -> argparse.ArgumentParser:
     """Build CLI argument parser."""
@@ -93,6 +113,8 @@ def main() -> None:
     if args.dry_run:
         print(json.dumps(execution_plan, indent=2))
         return
+
+    _ensure_preflight_or_exit(args, parser)
 
     config = PipelineConfig(
         ollama_base_url=args.ollama_base_url,
