@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import inspect
 import tempfile
 import threading
 import time
@@ -467,15 +468,19 @@ def main() -> None:
         document_type_choice = st.selectbox("Document type", document_type_options, index=0)
 
         st.markdown("---")
+        preflight_kwargs = {
+            "backend": backend,
+            "enable_search": enable_search,
+            "claude_api_key": claude_api_key or default_claude_api_key,
+            "brave_api_key": brave_api_key or default_brave_api_key,
+            "ollama_base_url": ollama_base_url,
+            "ollama_model": ollama_model,
+            "openai_api_key": openai_api_key or default_openai_api_key,
+            "openai_base_url": openai_base_url,
+        }
+        supported_preflight_params = set(inspect.signature(run_preflight).parameters)
         preflight_statuses = run_preflight(
-            backend=backend,
-            enable_search=enable_search,
-            claude_api_key=claude_api_key or default_claude_api_key,
-            brave_api_key=brave_api_key or default_brave_api_key,
-            ollama_base_url=ollama_base_url,
-            ollama_model=ollama_model,
-            openai_api_key=openai_api_key or default_openai_api_key,
-            openai_base_url=openai_base_url,
+            **{name: value for name, value in preflight_kwargs.items() if name in supported_preflight_params}
         )
         _render_capability_status(preflight_statuses)
 
