@@ -11,25 +11,44 @@ from typing import Any
 import streamlit as st
 from streamlit.errors import StreamlitSecretNotFoundError
 
-from app_utils import (
-    PASS_SEQUENCE,
-    collect_pass_outputs,
-    collect_run_report,
-    format_gap_plain_english,
-    format_plan_for_display,
-    get_available_backends,
-    build_plan_request_document,
-    get_status_color,
-    is_streamlit_cloud_environment,
-    parse_final_sections,
-    parse_plan_output,
-    read_final_markdown,
-)
+import app_utils
 from src.config import PipelineConfig
 from src.document_classifier import SUPPORTED_DOCUMENT_TYPES
 from src.pipeline import AuditablePipeline
 from src.preflight import CapabilityStatus, run_preflight
 from src.text_extractor import TextExtractionResult, extract_text_from_path
+
+PASS_SEQUENCE = app_utils.PASS_SEQUENCE
+collect_pass_outputs = app_utils.collect_pass_outputs
+collect_run_report = app_utils.collect_run_report
+format_gap_plain_english = app_utils.format_gap_plain_english
+format_plan_for_display = app_utils.format_plan_for_display
+get_available_backends = app_utils.get_available_backends
+get_status_color = app_utils.get_status_color
+is_streamlit_cloud_environment = app_utils.is_streamlit_cloud_environment
+parse_final_sections = app_utils.parse_final_sections
+parse_plan_output = app_utils.parse_plan_output
+read_final_markdown = app_utils.read_final_markdown
+
+
+def _build_plan_request_document_fallback(plan_request: str) -> str:
+    request = plan_request.strip()
+    return "\n".join(
+        [
+            "Title: Requested Plan",
+            f"Goal: {request}",
+            "Materials:",
+            "- TBD resources to be identified during planning",
+            "Plan:",
+            "1. Clarify the desired outcome and constraints.",
+            "2. Gather required materials, tools, and dependencies.",
+            "3. Execute the work in a safe, ordered sequence.",
+            f"Expected output: Completed objective for '{request}'.",
+        ]
+    )
+
+
+build_plan_request_document = getattr(app_utils, "build_plan_request_document", _build_plan_request_document_fallback)
 
 st.set_page_config(page_title="Auditable Document Pipeline", page_icon="📄", layout="wide")
 st.title("Auditable Document Pipeline")
