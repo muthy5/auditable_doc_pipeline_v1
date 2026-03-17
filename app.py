@@ -36,7 +36,7 @@ st.title("Auditable Document Pipeline")
 def _secret_or_env(name: str) -> str:
     try:
         return str(st.secrets.get(name, os.environ.get(name, "")))
-    except StreamlitSecretNotFoundError:
+    except (StreamlitSecretNotFoundError, TypeError, KeyError, FileNotFoundError):
         return os.environ.get(name, "")
 
 
