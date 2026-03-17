@@ -14,6 +14,7 @@ from .chunker import chunk_document
 from .config import PipelineConfig, RepoPaths
 from .exceptions import PipelineError
 from .document_classifier import DEFAULT_DOCUMENT_TYPE, SUPPORTED_DOCUMENT_TYPES, classify_document_with_metadata
+from .fallback import build_fallback_queries, detect_gaps
 from .llm_interface import RuleBasedDemoBackend
 from .markdown_writer import render_final_answer_markdown, render_plan_markdown
 from .openai_backend import OpenAIBackendConfig, OpenAICompatibleBackend
@@ -134,6 +135,10 @@ class AuditablePipeline:
             missing.append(str(repo_paths.prompts_dir / "classify_document.txt"))
         if not (repo_paths.schemas_dir / "classify_document.schema.json").exists():
             missing.append(str(repo_paths.schemas_dir / "classify_document.schema.json"))
+        if not (repo_paths.prompts_dir / "fallback_queries.txt").exists():
+            missing.append(str(repo_paths.prompts_dir / "fallback_queries.txt"))
+        if not (repo_paths.schemas_dir / "fallback_queries.schema.json").exists():
+            missing.append(str(repo_paths.schemas_dir / "fallback_queries.schema.json"))
         for document_type in SUPPORTED_DOCUMENT_TYPES:
             template_path = repo_paths.schemas_dir / "document_types" / f"{document_type}.json"
             if not template_path.exists():
@@ -228,6 +233,83 @@ class AuditablePipeline:
             if prev is None or item["similarity_score"] > prev["similarity_score"]:
                 deduped[key] = item
         return sorted(deduped.values(), key=lambda x: x["similarity_score"], reverse=True)[:20]
+
+    def _build_fallback_context(
+        self,
+        merge: dict[str, Any],
+        normalize: dict[str, Any],
+        user_goal: str,
+        existing_web_context: list[dict[str, Any]],
+        strict: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Detect gaps in the merged extraction and search for missing information.
+
+        Returns additional web context entries that supplement *existing_web_context*.
+        Only runs when ``enable_fallback_search`` is configured and a Brave API key
+        is available.  When no gaps are detected the method returns an empty list.
+        """
+        if not self.config.enable_fallback_search:
+            return []
+        if not self.config.brave_api_key:
+            LOGGER.warning(
+                "Fallback search is enabled but no Brave API key was provided; skipping."
+            )
+            return []
+
+        gaps = detect_gaps(merge, normalize)
+        if not gaps:
+            LOGGER.info("No information gaps detected; fallback search not needed.")
+            return []
+
+        LOGGER.info("Detected %d information gap(s); generating fallback search queries.", len(gaps))
+
+        # Use the LLM to generate queries when available, fall back to heuristic queries.
+        if self.backend_name != "demo":
+            try:
+                payload = {"task": normalize, "gaps": gaps}
+                query_output = self.backend.generate_json(
+                    pass_name="fallback_queries",
+                    prompt_text=load_prompt(self.repo_paths.prompts_dir, "fallback_queries.txt"),
+                    payload=payload,
+                    schema=load_schema(self.repo_paths.schemas_dir, "fallback_queries.schema.json"),
+                )
+                self.pass_runner.validate_with_schema("fallback_queries.schema.json", query_output)
+                queries = [q for q in query_output.get("queries", []) if isinstance(q, str) and q.strip()]
+            except Exception as exc:  # noqa: BLE001 - graceful degradation
+                LOGGER.warning("LLM-based fallback query generation failed (%s); using heuristic queries.", exc)
+                queries = build_fallback_queries(gaps, normalize, user_goal)
+        else:
+            queries = build_fallback_queries(gaps, normalize, user_goal)
+
+        if not queries:
+            return []
+
+        # Deduplicate against queries already used in existing_web_context
+        existing_queries = {entry.get("query", "").lower() for entry in existing_web_context}
+        queries = [q for q in queries if q.lower() not in existing_queries]
+        if not queries:
+            LOGGER.info("All fallback queries already covered by existing web context.")
+            return []
+
+        try:
+            client = BraveSearchClient(api_key=self.config.brave_api_key)
+            fallback_context: list[dict[str, Any]] = []
+            with ThreadPoolExecutor(max_workers=min(len(queries), 5)) as executor:
+                futures = {executor.submit(client.search, query): query for query in queries}
+                for future in futures:
+                    query = futures[future]
+                    fallback_context.append({
+                        "query": query,
+                        "results": future.result(),
+                        "source": "fallback",
+                    })
+            LOGGER.info("Fallback search returned %d result group(s).", len(fallback_context))
+            return fallback_context
+        except Exception as exc:  # noqa: BLE001 - graceful degradation
+            if strict:
+                raise
+            LOGGER.warning("Fallback web search failed: %s", exc)
+            return []
 
     def _resolve_chunk_settings(self, fast: bool = False) -> tuple[int, int, int]:
         """Return backend-aware chunk sizing settings."""
@@ -574,6 +656,34 @@ class AuditablePipeline:
                 merge = self.pass_runner.write_validated_json("02_merge_global.schema.json", merge, passes_dir / "02_merge_global.json", "02_merge_global", strict)
 
             chunk_summaries = [{"chunk_id": item["chunk_id"], "section_role": item["section_role"]} for item in ordered_chunk_extractions]
+
+            # --- Fallback data source: detect gaps and enrich web_context ---
+            fallback_context_output = passes_dir / "fallback_web_context.json"
+            if resume and fallback_context_output.exists():
+                fallback_results = json.loads(fallback_context_output.read_text(encoding="utf-8")).get("fallback_context", [])
+                if fallback_results:
+                    web_context = web_context + fallback_results
+                    LOGGER.info("Loaded %d fallback context group(s) from previous run.", len(fallback_results))
+            else:
+                fallback_results = self._build_fallback_context(
+                    merge=merge,
+                    normalize=normalize,
+                    user_goal=user_goal,
+                    existing_web_context=web_context,
+                    strict=strict,
+                )
+                if fallback_results:
+                    fallback_context_output.write_text(
+                        json.dumps({"fallback_context": fallback_results}, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+                    web_context = web_context + fallback_results
+                    # Re-persist combined web context so downstream resume picks it up
+                    web_context_output.write_text(
+                        json.dumps({"web_context": web_context}, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+                    LOGGER.info("Enriched web_context with %d fallback result group(s).", len(fallback_results))
 
             def run_or_load(pass_name: str, prompt: str, schema: str, payload: dict[str, Any]) -> dict[str, Any]:
                 output_path = passes_dir / f"{pass_name}.json"

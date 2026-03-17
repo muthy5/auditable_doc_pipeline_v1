@@ -220,7 +220,7 @@ def _render_evidence_trail(pass_outputs: dict[str, Any]) -> None:
         st.markdown(f"- **{claim_id}** ({status}): {claim_text} — _Sources: {refs_text}_")
 
 
-def _render_detailed_audit(pass_outputs: dict[str, Any], run_report: dict[str, Any], web_context_payload: dict[str, Any], retrieval_context_payload: dict[str, Any]) -> None:
+def _render_detailed_audit(pass_outputs: dict[str, Any], run_report: dict[str, Any], web_context_payload: dict[str, Any], retrieval_context_payload: dict[str, Any], fallback_context_payload: dict[str, Any] | None = None) -> None:
     st.markdown("### Evidence trail")
     _render_evidence_trail(pass_outputs)
 
@@ -246,6 +246,13 @@ def _render_detailed_audit(pass_outputs: dict[str, Any], run_report: dict[str, A
             st.info("No local reference context retrieved for this run.")
         else:
             st.json(retrieval_context_payload)
+
+    if fallback_context_payload is not None:
+        with st.expander("Fallback search results"):
+            if not fallback_context_payload.get("fallback_context"):
+                st.info("No fallback search was triggered for this run.")
+            else:
+                st.json(fallback_context_payload)
 
 
 def _load_plan_from_final(run_dir: Path) -> dict[str, Any]:
@@ -279,8 +286,10 @@ def _render_results(run_dir: Path) -> None:
 
     web_context_path = run_dir / "passes" / "search_web_context.json"
     retrieval_context_path = run_dir / "passes" / "retrieval_context.json"
+    fallback_context_path = run_dir / "passes" / "fallback_web_context.json"
     web_context_payload = json.loads(web_context_path.read_text(encoding="utf-8")) if web_context_path.exists() else {}
     retrieval_context_payload = json.loads(retrieval_context_path.read_text(encoding="utf-8")) if retrieval_context_path.exists() else {}
+    fallback_context_payload = json.loads(fallback_context_path.read_text(encoding="utf-8")) if fallback_context_path.exists() else {}
 
     detected_type = "unknown"
     classification_path = run_dir / "passes" / "classify_document.json"
@@ -308,7 +317,7 @@ def _render_results(run_dir: Path) -> None:
         _render_assumptions_and_bottom_line(sections, plan_display)
 
     with tabs[1]:
-        _render_detailed_audit(pass_outputs, run_report, web_context_payload, retrieval_context_payload)
+        _render_detailed_audit(pass_outputs, run_report, web_context_payload, retrieval_context_payload, fallback_context_payload)
 
     with tabs[2]:
         if not plan:
@@ -450,8 +459,13 @@ def main() -> None:
         fast_mode = st.toggle("Fast mode", value=(backend in ("claude", "openai")), help="Use larger chunks, process chunks in parallel, and skip passes 05/06.")
         parallel_chunks = st.number_input("Parallel chunks", min_value=1, max_value=16, value=4 if backend in ("claude", "openai") else 1, step=1)
         enable_search = st.toggle("Web Search", value=False)
+        enable_fallback_search = st.toggle(
+            "Fallback Search",
+            value=False,
+            help="Automatically search the web when the uploaded document is missing information (materials, steps, etc.).",
+        )
         brave_api_key = ""
-        if enable_search:
+        if enable_search or enable_fallback_search:
             brave_api_key = st.text_input("Brave API Key", type="password", value=default_brave_api_key)
         st.markdown("---")
         st.subheader("Reference Documents")
@@ -544,6 +558,7 @@ def main() -> None:
                 ollama_base_url=ollama_base_url,
                 ollama_model=ollama_model,
                 enable_search=enable_search,
+                enable_fallback_search=enable_fallback_search,
                 brave_api_key=brave_api_key,
                 reference_dir=resolved_reference_dir,
             )

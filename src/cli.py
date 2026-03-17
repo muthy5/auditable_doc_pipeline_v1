@@ -92,6 +92,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--openai-model", default="gpt-4o", help="Model name for OpenAI-compatible backend.")
     parser.add_argument("--openai-base-url", default="https://api.openai.com/v1", help="Base URL for OpenAI-compatible API.")
     parser.add_argument("--enable-search", action="store_true", help="Enable Brave web search enrichment.")
+    parser.add_argument("--enable-fallback-search", action="store_true", help="Automatically search the web when information gaps are detected in the uploaded document.")
     parser.add_argument("--brave-api-key", default="", help="Brave Search API key (or set BRAVE_API_KEY).")
     parser.add_argument("--reference-dir", default=None, help="Directory containing local reference docs for retrieval.")
     parser.add_argument("--strict", action="store_true", help="Halt on first JSON schema validation failure.")
@@ -141,6 +142,7 @@ def main() -> None:
         openai_model=args.openai_model,
         openai_base_url=args.openai_base_url,
         enable_search=args.enable_search,
+        enable_fallback_search=args.enable_fallback_search,
         brave_api_key=args.brave_api_key or os.environ.get("BRAVE_API_KEY", ""),
         reference_dir=args.reference_dir or "",
     )
