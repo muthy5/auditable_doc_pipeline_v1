@@ -10,7 +10,7 @@ from typing import Any, Dict
 from .exceptions import BackendError
 from .llm_interface import LocalLLMBackend
 from .retry import RetryConfig
-from .token_budget import TokenWindowTracker, estimate_tokens
+from .token_budget import TokenWindowTracker
 
 LOGGER = logging.getLogger(__name__)
 
@@ -69,9 +69,6 @@ class ClaudeAPIBackend(LocalLLMBackend):
     ) -> Dict[str, Any]:
         """Generate a JSON response from the Claude API with retry + backoff."""
         effective_model = model_override or self.config.model
-        composed_prompt = self._compose_prompt(pass_name=pass_name, prompt_text=prompt_text, payload=payload, schema=schema)
-        static_part = ""
-        dynamic_part = ""
         if self.config.enable_prompt_caching:
             static_part, dynamic_part = self._split_prompt(
                 pass_name=pass_name,
@@ -79,6 +76,11 @@ class ClaudeAPIBackend(LocalLLMBackend):
                 payload=payload,
                 schema=schema,
             )
+            composed_prompt = static_part + "\n\n" + dynamic_part
+        else:
+            static_part = ""
+            dynamic_part = ""
+            composed_prompt = self._compose_prompt(pass_name=pass_name, prompt_text=prompt_text, payload=payload, schema=schema)
 
         def _call() -> Dict[str, Any]:
             call_start = time.perf_counter()
@@ -157,7 +159,9 @@ class ClaudeAPIBackend(LocalLLMBackend):
             return any(token in text for token in ["rate limit", "timeout", "temporar", "overloaded", "connection"])
 
         retry_config = RetryConfig(max_retries=self.config.max_retries, base_delay_s=2.0, max_delay_s=90.0)
-        estimated_tokens = estimate_tokens(composed_prompt)
+        # Reuse the already-composed prompt string for token estimation
+        # instead of re-serializing the payload via estimate_payload_tokens
+        estimated_tokens = len(composed_prompt) // 4
 
         try:
             attempt = 0
