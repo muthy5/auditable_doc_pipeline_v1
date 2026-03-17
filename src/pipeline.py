@@ -232,7 +232,19 @@ class AuditablePipeline:
     ) -> Path:
         """Execute the full pipeline and return the run directory."""
         if "fast_mode" in kwargs:
-            fast = bool(kwargs.pop("fast_mode"))
+            fast_mode_value = kwargs.pop("fast_mode")
+            if isinstance(fast_mode_value, bool):
+                fast = fast_mode_value
+            elif isinstance(fast_mode_value, str):
+                normalized = fast_mode_value.strip().lower()
+                if normalized in {"1", "true", "yes", "on"}:
+                    fast = True
+                elif normalized in {"0", "false", "no", "off", ""}:
+                    fast = False
+                else:
+                    raise ValueError(f"Invalid fast_mode value: {fast_mode_value!r}")
+            else:
+                fast = bool(fast_mode_value)
         if kwargs:
             unexpected = ", ".join(sorted(kwargs.keys()))
             raise TypeError(f"run() got unexpected keyword argument(s): {unexpected}")
@@ -344,7 +356,7 @@ class AuditablePipeline:
                     selected_document_type = classification.get("selected_document_type", classification.get("document_type", DEFAULT_DOCUMENT_TYPE))
                 else:
                     LOGGER.info("Starting pass classify_document")
-                    classification = classify_document_with_metadata(text, self.backend)
+                    classification = classify_document_with_metadata(text, self.backend, repo_root=self.repo_paths.root)
                     self.pass_runner.validate_with_schema("classify_document.schema.json", {
                         "document_type": classification["document_type"],
                         "confidence": classification["confidence"],
