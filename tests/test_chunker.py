@@ -40,3 +40,14 @@ def test_oversized_paragraph_respects_hard_max_words() -> None:
 
     assert len(chunks) >= 3
     assert all(len(chunk["text"].split()) <= 25 for chunk in chunks)
+
+
+def test_oversized_paragraph_preserves_source_spans() -> None:
+    text = "Para1  with   extra   spaces and\ttabs."
+    doc = {"doc_id": "doc_test", "text": text}
+
+    chunks = chunk_document(doc=doc, target_min_words=1, target_max_words=3, hard_max_words=4, overlap_max_words=0)
+
+    for chunk in chunks:
+        source_slice = text[chunk["start_char"] : chunk["end_char"]]
+        assert chunk["text"] == source_slice.strip()

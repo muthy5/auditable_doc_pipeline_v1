@@ -71,17 +71,18 @@ def split_into_sections(text: str) -> list[Section]:
 
 
 def _split_oversized_paragraph(paragraph: tuple[int, int, str], hard_max_words: int) -> list[tuple[int, int, str]]:
-    para_start, para_end, para_text = paragraph
-    words = para_text.split()
+    para_start, _para_end, para_text = paragraph
+    words = [match for match in re.finditer(r"\S+", para_text)]
     if len(words) <= hard_max_words:
         return [paragraph]
     pieces: list[tuple[int, int, str]] = []
-    cursor = para_start
     for start in range(0, len(words), hard_max_words):
-        part_text = " ".join(words[start : start + hard_max_words])
-        part_end = cursor + len(part_text)
-        pieces.append((cursor, min(part_end, para_end), part_text))
-        cursor = part_end + 1
+        chunk_words = words[start : start + hard_max_words]
+        rel_start = chunk_words[0].start()
+        rel_end = chunk_words[-1].end()
+        piece_start = para_start + rel_start
+        piece_end = para_start + rel_end
+        pieces.append((piece_start, piece_end, para_text[rel_start:rel_end]))
     return pieces
 
 

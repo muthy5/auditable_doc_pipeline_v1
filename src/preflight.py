@@ -32,6 +32,8 @@ def check_ollama(base_url: str, model: str, timeout_s: float = 5.0) -> Capabilit
         return CapabilityStatus(False, f"Ollama server unreachable at {url}: {exc}")
     except Exception as exc:  # noqa: BLE001
         return CapabilityStatus(False, f"Failed to query Ollama server at {url}: {exc}")
+    if not isinstance(payload, dict):
+        return CapabilityStatus(False, f"Unexpected Ollama /api/tags payload type: {type(payload).__name__}")
     models = [item.get("name", "") for item in payload.get("models", []) if isinstance(item, dict)]
     if model not in models:
         return CapabilityStatus(False, f"Ollama model '{model}' not found. Available: {models}")

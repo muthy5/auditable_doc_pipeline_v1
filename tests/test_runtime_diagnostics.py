@@ -142,6 +142,15 @@ def test_ollama_model_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     status = check_ollama("http://127.0.0.1:11434", "llama3")
     assert not status.available
 
+def test_check_ollama_handles_non_mapping_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("urllib.request.urlopen", lambda *args, **kwargs: _FakeResponse([]))
+
+    status = check_ollama("http://127.0.0.1:11434", "llama3")
+
+    assert not status.available
+    assert "Unexpected Ollama /api/tags payload type" in status.message
+
+
 
 def test_preflight_helper_baseline(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())

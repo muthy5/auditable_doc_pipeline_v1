@@ -241,7 +241,11 @@ def _ensure_plan_generated(pass_outputs: dict[str, Any], run_dir: Path) -> None:
 
 def _render_results(run_dir: Path) -> None:
     sections = parse_final_sections(run_dir)
-    synthesis_payload = json.loads((run_dir / "passes" / "07_synthesize.json").read_text(encoding="utf-8"))
+    synthesis_path = run_dir / "passes" / "07_synthesize.json"
+    if synthesis_path.exists():
+        synthesis_payload = json.loads(synthesis_path.read_text(encoding="utf-8"))
+    else:
+        synthesis_payload = json.loads((run_dir / "final" / "final_answer.json").read_text(encoding="utf-8"))
     plan = _load_plan_from_final(run_dir)
     plan_display = format_plan_for_display(plan) if plan else {}
     pass_outputs = collect_pass_outputs(run_dir)
@@ -353,7 +357,10 @@ def _run_pipeline(pipeline: AuditablePipeline, input_path: Path, temp_root: Path
             if run_dirs:
                 chunks_path = run_dirs[-1].parent / "input" / "chunks.json"
                 if chunks_path.exists():
-                    chunk_estimated_total = len(json.loads(chunks_path.read_text(encoding="utf-8")))
+                    try:
+                        chunk_estimated_total = len(json.loads(chunks_path.read_text(encoding="utf-8")))
+                    except json.JSONDecodeError:
+                        chunk_estimated_total = 0
                 extract_dir = run_dirs[-1] / "01_extract_chunk"
                 if extract_dir.exists():
                     chunk_files = len(list(extract_dir.glob("*.json")))
