@@ -17,6 +17,10 @@ class ChunkingError(ValueError):
     """Raised when chunk generation cannot proceed."""
 
 
+class PipelineCancelled(PipelineError):
+    """Raised when a running pipeline is cancelled by the user."""
+
+
 class PassSchemaValidationError(RuntimeError):
     """Raised when a pass output fails schema validation in strict mode."""
 

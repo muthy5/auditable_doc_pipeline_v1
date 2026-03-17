@@ -5,10 +5,13 @@ import json
 import logging
 import os
 import re
+import signal
+import threading
 from pathlib import Path
 
 from .config import PipelineConfig
 from .document_classifier import SUPPORTED_DOCUMENT_TYPES
+from .exceptions import PipelineCancelled
 from .pipeline import AuditablePipeline
 from .preflight import run_preflight
 
@@ -148,24 +151,34 @@ def main() -> None:
         reference_dir=args.reference_dir or "",
     )
     repo_root = Path(__file__).resolve().parents[1]
-    pipeline = AuditablePipeline(repo_root=repo_root, backend_name=args.backend, config=config)
+    cancel_event = threading.Event()
+    pipeline = AuditablePipeline(repo_root=repo_root, backend_name=args.backend, config=config, cancel_event=cancel_event)
 
-    explicit_run_dir = Path(args.run_dir) if args.run_dir else None
-    run_dir = pipeline.run(
-        input_path=Path(args.input) if args.input else None,
-        runs_dir=Path(args.runs_dir),
-        run_dir=explicit_run_dir,
-        resume=args.resume,
-        doc_id=args.doc_id,
-        title=args.title,
-        user_goal=args.goal,
-        requested_deliverable=args.deliverable,
-        strict=args.strict,
-        document_type=args.document_type,
-        parallel_chunks=args.parallel_chunks,
-        fast=not args.thorough,
-    )
-    print(run_dir)
+    def _handle_sigint(signum: int, frame: object) -> None:
+        logging.getLogger(__name__).info("Ctrl+C received — stopping pipeline after current pass...")
+        cancel_event.set()
+
+    signal.signal(signal.SIGINT, _handle_sigint)
+
+    try:
+        explicit_run_dir = Path(args.run_dir) if args.run_dir else None
+        run_dir = pipeline.run(
+            input_path=Path(args.input) if args.input else None,
+            runs_dir=Path(args.runs_dir),
+            run_dir=explicit_run_dir,
+            resume=args.resume,
+            doc_id=args.doc_id,
+            title=args.title,
+            user_goal=args.goal,
+            requested_deliverable=args.deliverable,
+            strict=args.strict,
+            document_type=args.document_type,
+            parallel_chunks=args.parallel_chunks,
+            fast=not args.thorough,
+        )
+        print(run_dir)
+    except PipelineCancelled:
+        print("Pipeline stopped by user. Partial results saved — use --resume to continue.")
 
 
 if __name__ == "__main__":

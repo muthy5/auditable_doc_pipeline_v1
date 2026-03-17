@@ -459,10 +459,17 @@ def _launch_background_pipeline(
     )
 
 
+def _request_pipeline_stop(runs_dir: Path) -> None:
+    """Write a stop signal file that the background runner watches for."""
+    stop_file = runs_dir / "bg_stop.json"
+    stop_file.write_text(json.dumps({"stop": True}), encoding="utf-8")
+
+
 def _wait_for_pipeline(runs_dir: Path) -> tuple[Path | None, Exception | None]:
     """Poll bg_status.json and filesystem for progress until the pipeline finishes."""
     progress = st.progress(0, text="Starting pipeline...")
     status_placeholder = st.empty()
+    stop_placeholder = st.empty()
 
     while True:
         bg_status = _read_bg_status(runs_dir)
@@ -470,6 +477,7 @@ def _wait_for_pipeline(runs_dir: Path) -> tuple[Path | None, Exception | None]:
         if bg_status and bg_status.get("state") == "completed":
             run_dir_str = bg_status.get("run_dir")
             _clear_bg_status(runs_dir)
+            stop_placeholder.empty()
             if run_dir_str:
                 progress.progress(1.0, text="Pipeline complete")
                 status_placeholder.success("Pipeline completed successfully")
@@ -477,9 +485,17 @@ def _wait_for_pipeline(runs_dir: Path) -> tuple[Path | None, Exception | None]:
             st.error("Pipeline completed but did not produce a run directory.")
             return None, Exception("missing run_dir")
 
+        if bg_status and bg_status.get("state") == "cancelled":
+            _clear_bg_status(runs_dir)
+            stop_placeholder.empty()
+            progress.progress(0.0, text="Pipeline stopped")
+            status_placeholder.warning("Pipeline was stopped by user. Partial results may be available via resume.")
+            return None, Exception("Pipeline cancelled by user")
+
         if bg_status and bg_status.get("state") == "failed":
             error_msg = bg_status.get("error", "Unknown error")
             _clear_bg_status(runs_dir)
+            stop_placeholder.empty()
             st.error(f"Pipeline failed: {error_msg}")
             return None, Exception(error_msg)
 
@@ -488,8 +504,15 @@ def _wait_for_pipeline(runs_dir: Path) -> tuple[Path | None, Exception | None]:
             pid = bg_status.get("pid")
             if pid is not None and not _is_process_alive(pid):
                 _clear_bg_status(runs_dir)
+                stop_placeholder.empty()
                 st.error("Pipeline background process died unexpectedly. Check bg_stderr.log for details.")
                 return None, Exception("background process died")
+
+        # Show a Stop button while pipeline is running
+        with stop_placeholder.container():
+            if st.button("Stop Pipeline", type="secondary", key="stop_pipeline"):
+                _request_pipeline_stop(runs_dir)
+                status_placeholder.warning("Stop requested — waiting for current pass to finish...")
 
         completed, current, overall_progress = _poll_filesystem_progress(runs_dir)
         progress.progress(overall_progress, text=f"Running {current}...")
@@ -613,7 +636,10 @@ def main() -> None:
     # --- Reconnect to in-progress or completed runs ---
     persistent_runs = _persistent_runs_dir()
     bg_status = _read_bg_status(persistent_runs)
-    if bg_status and bg_status.get("state") == "running":
+    if bg_status and bg_status.get("state") == "cancelled":
+        _clear_bg_status(persistent_runs)
+        st.warning("Previous pipeline run was stopped. You can start a new one.")
+    elif bg_status and bg_status.get("state") == "running":
         pid = bg_status.get("pid")
         if pid is not None and not _is_process_alive(pid):
             # Previous run's process is dead — clean up stale status

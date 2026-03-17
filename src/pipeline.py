@@ -13,7 +13,7 @@ from typing import Any, Callable
 from .claude_backend import ClaudeAPIBackend, ClaudeBackendConfig
 from .chunker import chunk_document
 from .config import PipelineConfig, RepoPaths
-from .exceptions import PipelineError
+from .exceptions import PipelineCancelled, PipelineError
 from .document_classifier import DEFAULT_DOCUMENT_TYPE, SUPPORTED_DOCUMENT_TYPES, classify_document_with_metadata
 from .fallback import build_fallback_queries, detect_gaps
 from .llm_interface import RuleBasedDemoBackend
@@ -66,8 +66,9 @@ class AuditablePipeline:
         ("08_validate_final", None, "08_validate_final.schema.json"),
     ]
 
-    def __init__(self, repo_root: Path, backend_name: str = "demo", config: PipelineConfig | None = None) -> None:
+    def __init__(self, repo_root: Path, backend_name: str = "demo", config: PipelineConfig | None = None, cancel_event: threading.Event | None = None) -> None:
         """Initialize pipeline dependencies and backend."""
+        self.cancel_event = cancel_event or threading.Event()
         self.repo_paths = RepoPaths.from_root(repo_root)
         self.config = config or PipelineConfig()
         self._validate_required_files(self.repo_paths)
@@ -108,6 +109,15 @@ class AuditablePipeline:
         self._fast_model: str | None = self.config.claude_fast_model if backend_name == "claude" else None
         # Passes that need full-capability model (Sonnet); all others use fast model (Haiku)
         self._sonnet_passes: frozenset[str] = frozenset({"07_synthesize", "09_generate_plan"})
+
+    def cancel(self) -> None:
+        """Signal the pipeline to stop after the current pass completes."""
+        self.cancel_event.set()
+
+    def _check_cancelled(self) -> None:
+        """Raise PipelineCancelled if cancellation has been requested."""
+        if self.cancel_event.is_set():
+            raise PipelineCancelled("Pipeline cancelled by user")
 
     def _model_for_pass(self, pass_name: str) -> str | None:
         """Return the fast model for cheap passes, None (default Sonnet) for critical ones."""
@@ -637,6 +647,7 @@ class AuditablePipeline:
                     pass  # handled below
 
             self._write_checkpoint(passes_dir, "00_normalize_request", "completed", {"classify_done": True})
+            self._check_cancelled()
 
             if document_type != "auto":
                 if document_type not in SUPPORTED_DOCUMENT_TYPES:
@@ -689,6 +700,8 @@ class AuditablePipeline:
                     reference_context = self._build_reference_context(normalize=normalize, user_goal=user_goal)
                     if reference_context:
                         retrieval_context_output.write_text(json.dumps({"reference_context": reference_context}, ensure_ascii=False), encoding="utf-8")
+
+            self._check_cancelled()
 
             extraction_dir = passes_dir / "01_extract_chunk"
             extraction_dir.mkdir(parents=True, exist_ok=True)
@@ -749,6 +762,7 @@ class AuditablePipeline:
                 self.pass_runner.mark_pass_status("01_extract_chunk", "completed")
 
             self._write_checkpoint(passes_dir, "01_extract_chunk", "completed", {"chunks_processed": total_chunks})
+            self._check_cancelled()
 
             merge = merge_chunk_extractions(doc_id, ordered_chunk_extractions)
             if resume and has_output("02_merge_global"):
@@ -759,6 +773,7 @@ class AuditablePipeline:
                 merge = self.pass_runner.write_validated_json("02_merge_global.schema.json", merge, passes_dir / "02_merge_global.json", "02_merge_global", strict)
 
             self._write_checkpoint(passes_dir, "02_merge_global", "completed")
+            self._check_cancelled()
 
             chunk_summaries = [
                 {"chunk_id": item["chunk_id"], "section_role": item["section_role"]}
@@ -863,6 +878,7 @@ class AuditablePipeline:
                     dependency_audit_payload,
                 )
             self._write_checkpoint(passes_dir, "04_dependency_audit", "completed")
+            self._check_cancelled()
 
             if fast:
                 LOGGER.info("Fast mode enabled: skipping passes 05_assumption_audit and 06_evidence_audit")
@@ -907,6 +923,7 @@ class AuditablePipeline:
             synthesis = run_or_load("07_synthesize", "07_synthesize.txt", "07_synthesize.schema.json", synthesis_payload)
 
             self._write_checkpoint(passes_dir, "07_synthesize", "completed")
+            self._check_cancelled()
 
             # Run plan generation and validation in parallel — they are independent after synthesis
             plan_payload = self._trim_if_claude(

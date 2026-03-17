@@ -15,7 +15,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import signal
 import sys
+import threading
 import traceback
 from pathlib import Path
 
@@ -47,13 +49,45 @@ def main() -> None:
     fast = job["fast"]
     parallel_chunks = job.get("parallel_chunks")
 
+    # Create a cancel event that the pipeline checks between passes
+    cancel_event = threading.Event()
+
     # Write initial status including PID so the UI can check liveness
     status_path = runs_dir / "bg_status.json"
     _write_status(status_path, {"state": "running", "error": None, "run_dir": None, "pid": os.getpid()})
 
+    def _handle_stop_signal(signum: int, frame: object) -> None:
+        """Handle SIGTERM/SIGINT by setting the cancel event."""
+        logging.getLogger(__name__).info("Received signal %d, cancelling pipeline...", signum)
+        cancel_event.set()
+
+    signal.signal(signal.SIGTERM, _handle_stop_signal)
+    signal.signal(signal.SIGINT, _handle_stop_signal)
+
+    # Also watch for a stop file written by the UI
+    stop_file = runs_dir / "bg_stop.json"
+
+    def _watch_stop_file() -> None:
+        """Poll for a stop file and set the cancel event when found."""
+        import time
+        while not cancel_event.is_set():
+            if stop_file.exists():
+                logging.getLogger(__name__).info("Stop file detected, cancelling pipeline...")
+                cancel_event.set()
+                try:
+                    stop_file.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                return
+            time.sleep(0.5)
+
+    watcher = threading.Thread(target=_watch_stop_file, daemon=True)
+    watcher.start()
+
     try:
         pipeline = AuditablePipeline(
-            repo_root=repo_root, backend_name=backend_name, config=config
+            repo_root=repo_root, backend_name=backend_name, config=config,
+            cancel_event=cancel_event,
         )
         run_dir = pipeline.run(
             input_path=input_path,
@@ -70,12 +104,20 @@ def main() -> None:
             "run_dir": str(run_dir),
         })
     except Exception as exc:
-        _write_status(status_path, {
-            "state": "failed",
-            "error": f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}",
-            "run_dir": None,
-        })
-        sys.exit(1)
+        from src.exceptions import PipelineCancelled
+        if isinstance(exc, PipelineCancelled):
+            _write_status(status_path, {
+                "state": "cancelled",
+                "error": "Pipeline stopped by user",
+                "run_dir": None,
+            })
+        else:
+            _write_status(status_path, {
+                "state": "failed",
+                "error": f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}",
+                "run_dir": None,
+            })
+            sys.exit(1)
 
 
 if __name__ == "__main__":
