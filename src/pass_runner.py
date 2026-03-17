@@ -27,10 +27,22 @@ class PassRunner:
         self.schemas_dir = schemas_dir
         self.validation_failures: list[str] = []
         self.timings: dict[str, float] = {}
+        self.pass_outcomes: dict[str, dict[str, Any]] = {}
 
     def _record_timing(self, pass_name: str, start_time: float, end_time: float) -> None:
         """Store elapsed seconds for a pass."""
         self.timings[pass_name] = end_time - start_time
+
+    def _record_outcome(self, pass_name: str, status: str, detail: str | None = None, **extra: Any) -> None:
+        outcome: dict[str, Any] = {"status": status}
+        if detail:
+            outcome["detail"] = detail
+        outcome.update(extra)
+        self.pass_outcomes[pass_name] = outcome
+
+    def mark_pass_status(self, pass_name: str, status: str, detail: str | None = None, **extra: Any) -> None:
+        """Allow pipeline orchestration code to record non-runner pass states."""
+        self._record_outcome(pass_name, status, detail, **extra)
 
     def write_timings(self, output_path: Path, total_time_s: float) -> None:
         """Write timing summary to disk."""
@@ -44,7 +56,7 @@ class PassRunner:
         output_path: Path,
         error: ValidationError,
         strict: bool,
-    ) -> None:
+    ) -> tuple[Path, str]:
         failed_path = output_path.with_suffix(".failed.json")
         failed_path.parent.mkdir(parents=True, exist_ok=True)
         failed_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -55,8 +67,10 @@ class PassRunner:
         LOGGER.error(message)
         self.validation_failures.append(message)
         if strict:
+            self._record_outcome(pass_name, "failed", message, failed_output_path=str(failed_path), validation_error=error.message)
             raise PassSchemaValidationError(pass_name=pass_name, message=message) from error
         LOGGER.warning("Continuing because strict mode is disabled.")
+        return failed_path, error.message
 
     def validate_with_schema(self, schema_filename: str, payload: dict[str, Any]) -> None:
         """Validate payload against schema without writing output."""
@@ -107,14 +121,27 @@ class PassRunner:
         try:
             Draft202012Validator(schema).validate(output)
         except ValidationError as error:
-            self._handle_schema_failure(pass_name, output, output_path, error, strict)
+            failed_path, validation_error = self._handle_schema_failure(pass_name, output, output_path, error, strict)
             fallback = self._build_fallback_from_schema(schema)
             fallback["_schema_validation_failed"] = True
+            fallback["_fallback_generated"] = True
+            fallback["_failed_output_path"] = str(failed_path)
+            fallback["_validation_error"] = validation_error
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps(fallback, indent=2, ensure_ascii=False), encoding="utf-8")
             self._record_timing(pass_name, start, time.perf_counter())
+            self._record_outcome(
+                pass_name,
+                "completed_with_fallback",
+                "Schema validation failed; fallback artifact generated.",
+                failed_output_path=str(failed_path),
+                validation_error=validation_error,
+            )
             return fallback
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(output, indent=2, ensure_ascii=False), encoding="utf-8")
         self._record_timing(pass_name, start, time.perf_counter())
+        self._record_outcome(pass_name, "completed")
         return output
 
     def write_validated_json(
@@ -131,12 +158,25 @@ class PassRunner:
         try:
             Draft202012Validator(schema).validate(payload)
         except ValidationError as error:
-            self._handle_schema_failure(pass_name, payload, output_path, error, strict)
+            failed_path, validation_error = self._handle_schema_failure(pass_name, payload, output_path, error, strict)
             fallback = self._build_fallback_from_schema(schema)
             fallback["_schema_validation_failed"] = True
+            fallback["_fallback_generated"] = True
+            fallback["_failed_output_path"] = str(failed_path)
+            fallback["_validation_error"] = validation_error
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps(fallback, indent=2, ensure_ascii=False), encoding="utf-8")
             self._record_timing(pass_name, start, time.perf_counter())
+            self._record_outcome(
+                pass_name,
+                "completed_with_fallback",
+                "Schema validation failed; fallback artifact generated.",
+                failed_output_path=str(failed_path),
+                validation_error=validation_error,
+            )
             return fallback
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
         self._record_timing(pass_name, start, time.perf_counter())
+        self._record_outcome(pass_name, "completed")
         return payload

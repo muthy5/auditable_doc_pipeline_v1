@@ -21,6 +21,7 @@ from .merge_engine import merge_chunk_extractions
 from .ollama_backend import OllamaBackendConfig, OllamaLocalBackend
 from .pass_runner import PassRunner
 from .report import write_run_report
+from .text_extractor import extract_text_from_path
 from .retriever import LocalFileRetriever
 from .schemas import load_schema
 from .validators import validate_chunks, validate_final_output
@@ -237,6 +238,7 @@ class AuditablePipeline:
             raise TypeError(f"run() got unexpected keyword argument(s): {unexpected}")
 
         self.pass_runner.validation_failures.clear()
+        self.pass_runner.pass_outcomes.clear()
         start_total = time.perf_counter()
         run_id = run_dir.name if run_dir else utc_run_id()
         run_dir = run_dir or (runs_dir / run_id)
@@ -250,7 +252,9 @@ class AuditablePipeline:
         root_logger.addHandler(file_handler)
 
         try:
-            text = input_path.read_text(encoding=self.config.encoding)
+            text = extract_text_from_path(input_path).strip()
+            if not text:
+                raise PipelineError(f"Unable to extract text from input file: {input_path}")
             document = {
                 "doc_id": doc_id,
                 "title": title,
@@ -302,6 +306,20 @@ class AuditablePipeline:
                     return any(target.glob("*.json"))
                 return target.exists()
 
+            def _status_from_payload(payload: dict[str, Any], resumed: bool = False) -> str:
+                if payload.get("_fallback_generated") or payload.get("_schema_validation_failed"):
+                    return "completed_with_fallback"
+                return "resumed" if resumed else "completed"
+
+            def _metadata_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+                details: dict[str, Any] = {}
+                if payload.get("_fallback_generated"):
+                    details["detail"] = "Schema validation failed; fallback payload used."
+                    for key in ["_schema_validation_failed", "_fallback_generated", "_failed_output_path", "_validation_error"]:
+                        if key in payload:
+                            details[key] = payload[key]
+                return details
+
             normalize_input = {
                 "doc_manifest": {"doc_id": doc_id, "title": title},
                 "user_goal": user_goal,
@@ -311,6 +329,7 @@ class AuditablePipeline:
 
             if resume and has_output("00_normalize_request"):
                 normalize = json.loads((passes_dir / "00_normalize_request.json").read_text())
+                self.pass_runner.mark_pass_status("00_normalize_request", _status_from_payload(normalize, resumed=True), **_metadata_from_payload(normalize))
             else:
                 LOGGER.info("Starting pass 00_normalize_request")
                 normalize = self.pass_runner.run_model_pass("00_normalize_request", "00_normalize_request.txt", "00_normalize_request.schema.json", normalize_input, passes_dir / "00_normalize_request.json", strict)
@@ -403,18 +422,38 @@ class AuditablePipeline:
                         chunk_extractions[chunk_index] = extraction
 
             ordered_chunk_extractions: list[dict[str, Any]] = [item for item in chunk_extractions if item is not None]
+            resumed_chunks = 0
+            fallback_chunks = 0
+            for idx, chunk in enumerate(chunks):
+                out = extraction_dir / f"{chunk['chunk_id']}.json"
+                if resume and out.exists():
+                    resumed_chunks += 1
+                payload = ordered_chunk_extractions[idx] if idx < len(ordered_chunk_extractions) else {}
+                if isinstance(payload, dict) and (payload.get("_fallback_generated") or payload.get("_schema_validation_failed")):
+                    fallback_chunks += 1
+            if fallback_chunks > 0:
+                self.pass_runner.mark_pass_status("01_extract_chunk", "completed_with_fallback", detail=f"{fallback_chunks} chunk extraction(s) used fallback payloads")
+            elif resumed_chunks == len(chunks) and len(chunks) > 0:
+                self.pass_runner.mark_pass_status("01_extract_chunk", "resumed", detail="All chunk extractions loaded from existing artifacts")
+            else:
+                self.pass_runner.mark_pass_status("01_extract_chunk", "completed")
 
             merge = merge_chunk_extractions(doc_id, ordered_chunk_extractions)
-            if not (resume and has_output("02_merge_global")):
+            if resume and has_output("02_merge_global"):
+                merge = json.loads((passes_dir / "02_merge_global.json").read_text())
+                self.pass_runner.mark_pass_status("02_merge_global", _status_from_payload(merge, resumed=True), **_metadata_from_payload(merge))
+            else:
                 LOGGER.info("Starting pass 02_merge_global")
-                self.pass_runner.write_validated_json("02_merge_global.schema.json", merge, passes_dir / "02_merge_global.json", "02_merge_global", strict)
+                merge = self.pass_runner.write_validated_json("02_merge_global.schema.json", merge, passes_dir / "02_merge_global.json", "02_merge_global", strict)
 
             chunk_summaries = [{"chunk_id": item["chunk_id"], "section_role": item["section_role"]} for item in ordered_chunk_extractions]
 
             def run_or_load(pass_name: str, prompt: str, schema: str, payload: dict[str, Any]) -> dict[str, Any]:
                 output_path = passes_dir / f"{pass_name}.json"
                 if resume and output_path.exists():
-                    return json.loads(output_path.read_text())
+                    existing = json.loads(output_path.read_text())
+                    self.pass_runner.mark_pass_status(pass_name, _status_from_payload(existing, resumed=True), **_metadata_from_payload(existing))
+                    return existing
                 LOGGER.info("Starting pass %s", pass_name)
                 return self.pass_runner.run_model_pass(pass_name, prompt, schema, payload, output_path, strict)
 
@@ -424,6 +463,8 @@ class AuditablePipeline:
                 LOGGER.info("Fast mode enabled: skipping passes 05_assumption_audit and 06_evidence_audit")
                 assumption_audit = {"implicit_assumptions_found": [], "uncertainty_points": [], "blocking_assumptions": []}
                 evidence_audit = {"claim_registry": []}
+                self.pass_runner.mark_pass_status("05_assumption_audit", "skipped", detail="Skipped in fast mode")
+                self.pass_runner.mark_pass_status("06_evidence_audit", "skipped", detail="Skipped in fast mode")
             else:
                 assumption_audit = run_or_load("05_assumption_audit", "05_assumption_audit.txt", "05_assumption_audit.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "web_context": web_context, "reference_context": reference_context})
                 evidence_audit = run_or_load("06_evidence_audit", "06_evidence_audit.txt", "06_evidence_audit.schema.json", {"merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "web_context": web_context, "reference_context": reference_context})
@@ -431,7 +472,10 @@ class AuditablePipeline:
             plan = run_or_load("09_generate_plan", "09_generate_plan.txt", "09_generate_plan.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "evidence_audit": evidence_audit, "synthesis": synthesis, "web_context": web_context, "reference_context": reference_context})
 
             validation = validate_final_output(synthesis, normalize, schema_audit, dependency_audit, assumption_audit, evidence_audit, load_schema(self.repo_paths.schemas_dir, "07_synthesize.schema.json"))
-            if not (resume and has_output("08_validate_final")):
+            if resume and has_output("08_validate_final"):
+                existing_validation = json.loads((passes_dir / "08_validate_final.json").read_text())
+                self.pass_runner.mark_pass_status("08_validate_final", _status_from_payload(existing_validation, resumed=True), **_metadata_from_payload(existing_validation))
+            else:
                 LOGGER.info("Starting pass 08_validate_final")
                 self.pass_runner.write_validated_json("08_validate_final.schema.json", validation, passes_dir / "08_validate_final.json", "08_validate_final", strict)
 
@@ -442,6 +486,13 @@ class AuditablePipeline:
 
             total_time = time.perf_counter() - start_total
             self.pass_runner.write_timings(run_dir / "timing.json", total_time)
+            per_pass_status: dict[str, str] = {}
+            per_pass_details: dict[str, dict[str, Any]] = {}
+            for name, _, _ in self.PASS_SEQUENCE:
+                outcome = self.pass_runner.pass_outcomes.get(name, {"status": "failed", "detail": "No output recorded"})
+                per_pass_status[name] = str(outcome.get("status", "failed"))
+                per_pass_details[name] = outcome
+
             write_run_report(
                 run_dir,
                 {
@@ -450,7 +501,8 @@ class AuditablePipeline:
                     "model_name": getattr(self.backend, "config", None).model if hasattr(self.backend, "config") else "demo",
                     "input_path": str(input_path),
                     "total_duration_seconds": total_time,
-                    "per_pass_status": {name: "completed" for name, _, _ in self.PASS_SEQUENCE},
+                    "per_pass_status": per_pass_status,
+                    "per_pass_details": per_pass_details,
                     "blocking_gap_count": len(schema_audit.get("blocking_gaps", [])),
                     "unsupported_claim_count": len([e for e in validation.get("errors", []) if e.get("code") == "E_SYNTH_UNSUPPORTED_CLAIM"]),
                     "schema_validation_failure_list": self.pass_runner.validation_failures,

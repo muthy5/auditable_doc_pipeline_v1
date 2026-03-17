@@ -134,10 +134,25 @@ Run artifacts include `passes/retrieval_context.json` when reference context is 
 Each run writes:
 
 - `timing.json`: per-pass and total timing.
-- `report.json`: run metadata, pass status, gap/claim counters, schema failures.
+- `report.json`: run metadata, pass status, gap/claim counters, schema failures, and per-pass details (including fallback/skip reasons).
 - `logs/run.log`: run logs.
 - `final/final_answer.json` and `.md`.
 - `final/plan.json` and `final/plan.md` (generated corrected execution plan).
+
+
+
+### Pass status semantics (`report.json`)
+
+`report.json.per_pass_status` and `report.json.per_pass_details` use explicit state values:
+
+- `completed`: pass ran successfully in this run.
+- `resumed`: pass output was loaded from an existing run directory during `--resume`.
+- `skipped`: pass intentionally skipped (for example passes 05/06 in fast mode).
+- `completed_with_fallback`: schema validation failed in non-strict mode and a fallback canonical artifact was written.
+- `failed`: no successful/resumable output was recorded.
+
+When fallback is used, the canonical `passes/<pass>.json` file includes metadata:
+`_schema_validation_failed`, `_fallback_generated`, `_failed_output_path`, and `_validation_error`.
 
 ## Run inspector
 
@@ -151,11 +166,13 @@ Prints pass status, blocking gaps, timing, and final-answer preview.
 
 Run the Streamlit interface from the repository root:
 
+Main document uploads accept `.txt`, `.md`, `.pdf`, and `.docx` (text extraction is best-effort for PDF/DOCX based on installed optional dependencies). Reference uploads accept the same file types.
+
 ```bash
 streamlit run app.py
 ```
 
-The app supports the demo, Ollama, and Claude backends, allows strict mode toggling, optional web search, optional local reference documents, and renders run artifacts from the generated run directory.
+The app supports demo and Claude in Streamlit Cloud deployments. Ollama remains available for local/self-hosted deployments only. The UI also supports strict mode toggling, optional web search, optional local reference documents, and renders run artifacts from the generated run directory.
 
 
 ## Deploy to Streamlit Cloud
@@ -163,7 +180,8 @@ The app supports the demo, Ollama, and Claude backends, allows strict mode toggl
 1. Push your branch/repo to GitHub.
 2. In Streamlit Community Cloud, create a new app and point it at this repository with `app.py` as the entry point.
 3. In the app settings, add secrets from `.streamlit/secrets.toml.example` (for example `ANTHROPIC_API_KEY` and `BRAVE_API_KEY`).
-4. Deploy. Streamlit Cloud automatically reads `.streamlit/config.toml` for runtime settings and theme configuration.
+4. On Streamlit Cloud, use `demo` or `claude` backend. Ollama is intentionally hidden unless you self-host the app with network access to your Ollama instance.
+5. Deploy. Streamlit Cloud automatically reads `.streamlit/config.toml` for runtime settings and theme configuration.
 
 Local development can still use environment variables; the app checks `st.secrets` first, then falls back to environment variables for API keys.
 
