@@ -53,3 +53,34 @@ def test_demo_pipeline_fast_mode_skips_noncritical_passes(tmp_path: Path) -> Non
     assert not (run_dir / "passes" / "05_assumption_audit.json").exists()
     assert not (run_dir / "passes" / "06_evidence_audit.json").exists()
     assert (run_dir / "passes" / "07_synthesize.json").exists()
+
+
+def test_cli_fast_mode_skips_noncritical_passes(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    input_path = repo_root / "examples" / "lemonade_plan_missing_juicing.txt"
+    runs_dir = tmp_path / "runs"
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "src.cli",
+            "--input",
+            str(input_path),
+            "--backend",
+            "demo",
+            "--runs-dir",
+            str(runs_dir),
+            "--fast",
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    run_dir = Path(proc.stdout.strip())
+    assert run_dir.exists()
+    assert not (run_dir / "passes" / "05_assumption_audit.json").exists()
+    assert not (run_dir / "passes" / "06_evidence_audit.json").exists()
+    assert (run_dir / "passes" / "07_synthesize.json").exists()
