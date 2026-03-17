@@ -500,9 +500,9 @@ def main() -> None:
                     resolved_reference_dir = str(local_reference_dir)
 
             config = PipelineConfig(
-                claude_api_key=claude_api_key,
+                claude_api_key=claude_api_key or default_claude_api_key,
                 claude_model=claude_model,
-                openai_api_key=openai_api_key,
+                openai_api_key=openai_api_key or default_openai_api_key,
                 openai_model=openai_model,
                 openai_base_url=openai_base_url,
                 ollama_base_url=ollama_base_url,
