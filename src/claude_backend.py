@@ -9,7 +9,8 @@ from typing import Any, Dict
 
 from .exceptions import BackendError
 from .llm_interface import LocalLLMBackend
-from .retry import RetryConfig, retry_with_backoff
+from .retry import RetryConfig
+from .token_budget import TokenWindowTracker, estimate_tokens
 
 LOGGER = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ class ClaudeBackendConfig:
         model: str = "claude-sonnet-4-20250514",
         max_tokens: int = 4096,
         temperature: float = 0.0,
-        max_retries: int = 2,
+        max_retries: int = 4,
     ) -> None:
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
         self.model = model
@@ -35,7 +36,7 @@ class ClaudeBackendConfig:
 class ClaudeAPIBackend(LocalLLMBackend):
     """Backend that calls the Anthropic Claude API."""
 
-    def __init__(self, config: ClaudeBackendConfig) -> None:
+    def __init__(self, config: ClaudeBackendConfig, token_tracker: TokenWindowTracker | None = None) -> None:
         if not config.api_key:
             raise ValueError(
                 "Claude API key must be provided via --claude-api-key or ANTHROPIC_API_KEY environment variable."
@@ -50,6 +51,7 @@ class ClaudeAPIBackend(LocalLLMBackend):
                 "The 'anthropic' package is required for the Claude backend. "
                 "Install it with: pip install anthropic"
             )
+        self.token_tracker = token_tracker
 
     def generate_json(
         self,
@@ -96,24 +98,51 @@ class ClaudeAPIBackend(LocalLLMBackend):
                 raise BackendError("Parsed JSON is not an object.")
             return parsed
 
+        def _status_code(exc: Exception) -> int | None:
+            status_code = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+            return status_code if isinstance(status_code, int) else None
+
+        def _is_rate_limit_error(exc: Exception) -> bool:
+            if _status_code(exc) == 429:
+                return True
+            text = str(exc).lower()
+            return "rate limit" in text
+
         def _should_retry(exc: Exception) -> bool:
             if isinstance(exc, (json.JSONDecodeError, BackendError, TimeoutError, socket.timeout)):
                 return True
-            status_code = getattr(exc, "status_code", None) or getattr(exc, "status", None)
-            if isinstance(status_code, int):
-                return status_code in {408, 409, 425, 429, 500, 502, 503, 504}
+            status_code = _status_code(exc)
+            if status_code is not None:
+                if status_code == 429:
+                    return True
+                return status_code in {408, 409, 425, 500, 502, 503, 504}
             text = str(exc).lower()
             return any(token in text for token in ["rate limit", "timeout", "temporar", "overloaded", "connection"])
 
+        retry_config = RetryConfig(max_retries=self.config.max_retries, base_delay_s=2.0, max_delay_s=90.0)
+        estimated_tokens = estimate_tokens(composed_prompt)
+
         try:
-            return retry_with_backoff(
-                fn=_call,
-                should_retry=_should_retry,
-                config=RetryConfig(max_retries=self.config.max_retries, base_delay_s=0.5, max_delay_s=5.0),
-                on_retry=lambda attempt, exc: LOGGER.warning(
-                    "Claude retry attempt %s for pass '%s': %s", attempt, pass_name, exc
-                ),
-            )
+            attempt = 0
+            while True:
+                try:
+                    if self.token_tracker is not None:
+                        self.token_tracker.sleep_if_needed(estimated_tokens)
+                    result = _call()
+                    if self.token_tracker is not None:
+                        self.token_tracker.record_usage(estimated_tokens)
+                    return result
+                except Exception as exc:  # noqa: BLE001
+                    if attempt >= retry_config.max_retries or not _should_retry(exc):
+                        raise
+                    if _is_rate_limit_error(exc):
+                        LOGGER.warning("Rate limit hit on pass '%s'. Waiting 62s for window reset.", pass_name)
+                        delay = 62.0
+                    else:
+                        delay = min(retry_config.base_delay_s * (2**attempt), retry_config.max_delay_s)
+                        LOGGER.warning("Claude retry attempt %s for pass '%s': %s", attempt + 1, pass_name, exc)
+                    time.sleep(delay)
+                    attempt += 1
         except Exception as exc:
             raise BackendError(
                 f"Failed to produce valid JSON after {self.config.max_retries + 1} attempts "

@@ -118,6 +118,7 @@ def test_compose_prompt_uses_required_field_schema_summary(monkeypatch: pytest.M
 
 def test_generate_json_retries_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr("time.sleep", lambda _s: None)
     calls = {"n": 0}
 
     class _Module:
