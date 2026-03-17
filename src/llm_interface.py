@@ -259,7 +259,7 @@ class RuleBasedDemoBackend(LocalLLMBackend):
             "testing": ["test", "validation"],
             "deployment": ["deploy", "release"],
             "objective": ["objective", "goal"],
-            "inputs": ["materials", "ingredients", "inputs"],
+            "inputs": ["inputs", "input", "materials", "ingredients", "tool", "resource", "prerequisite"],
             "process_steps": ["step", "instructions", "procedure"],
             "outputs": ["output", "result"],
             "constraints": ["constraint", "limit", "requirement", "safety", "risk"],

@@ -182,6 +182,9 @@ def test_demo_generic_procedural_dossier_stays_domain_neutral(tmp_path: Path) ->
 
     assert "ingredient_preparation" not in schema_audit["expected_sections"]
     assert "inputs" in schema_audit["expected_sections"]
+    assert "constraints" in schema_audit["expected_sections"]
+    assert all(item.get("section") != "ingredient_preparation" for item in schema_audit["missing_sections"])
+    assert all(item.get("section") != "ingredient_preparation" for item in schema_audit["blocking_gaps"])
 
     forbidden = ["lemonade", "lemon", "lemons", "sugar", "water", "ice", "juicing"]
     for term in forbidden:
