@@ -15,7 +15,12 @@ def test_demo_backend_generates_plan_with_added_juicing_step() -> None:
         "09_generate_plan",
         "",
         {
-            "merge": {"doc_id": "doc_001"},
+            "merge": {
+                "doc_id": "doc_001",
+                "global_entities": {"materials": ["8 lemons", "1 cup sugar"]},
+                "all_outputs_produced": ["A pitcher of lemonade"],
+                "all_steps": [{"step_id": "s1", "text": "Mix sugar and water."}],
+            },
             "dependency_audit": {"blocking_dependencies": [{"dependency_id": "block_dep_001", "reason": "missing juicing"}]},
         },
     )

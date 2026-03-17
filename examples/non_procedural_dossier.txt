@@ -1,0 +1,11 @@
+Master dossier: Q4 incident review
+
+This dossier summarizes cross-team findings, communications timelines, and unresolved ownership questions.
+It is intended for executive review and risk triage.
+
+Key observations:
+- The integration outage affected three regions.
+- Escalation procedures were inconsistently followed.
+- Several facts remain uncertain pending legal review.
+
+This document is not a step-by-step operating procedure.
