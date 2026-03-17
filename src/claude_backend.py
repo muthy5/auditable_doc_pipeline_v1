@@ -15,6 +15,10 @@ from .token_budget import TokenWindowTracker, estimate_tokens
 LOGGER = logging.getLogger(__name__)
 
 
+def _compact_json(obj: Any) -> str:
+    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+
+
 class ClaudeBackendConfig:
     """Configuration for the Claude API backend."""
 
@@ -25,12 +29,14 @@ class ClaudeBackendConfig:
         max_tokens: int = 4096,
         temperature: float = 0.0,
         max_retries: int = 4,
+        enable_prompt_caching: bool = True,
     ) -> None:
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
         self.model = model
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.max_retries = max_retries
+        self.enable_prompt_caching = enable_prompt_caching
 
 
 class ClaudeAPIBackend(LocalLLMBackend):
@@ -61,23 +67,52 @@ class ClaudeAPIBackend(LocalLLMBackend):
         schema: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         """Generate a JSON response from the Claude API with retry + backoff."""
-        composed_prompt = self._compose_prompt(
-            pass_name=pass_name,
-            prompt_text=prompt_text,
-            payload=payload,
-            schema=schema,
-        )
+        composed_prompt = self._compose_prompt(pass_name=pass_name, prompt_text=prompt_text, payload=payload, schema=schema)
+        static_part = ""
+        dynamic_part = ""
+        if self.config.enable_prompt_caching:
+            static_part, dynamic_part = self._split_prompt(
+                pass_name=pass_name,
+                prompt_text=prompt_text,
+                payload=payload,
+                schema=schema,
+            )
 
         def _call() -> Dict[str, Any]:
             call_start = time.perf_counter()
-            response = self._client.messages.create(
-                model=self.config.model,
-                max_tokens=self.config.max_tokens,
-                temperature=self.config.temperature,
-                messages=[{"role": "user", "content": composed_prompt}],
-            )
+            if self.config.enable_prompt_caching:
+                response = self._client.messages.create(
+                    model=self.config.model,
+                    max_tokens=self.config.max_tokens,
+                    temperature=self.config.temperature,
+                    system=[
+                        {
+                            "type": "text",
+                            "text": static_part,
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                    messages=[{"role": "user", "content": dynamic_part}],
+                )
+            else:
+                response = self._client.messages.create(
+                    model=self.config.model,
+                    max_tokens=self.config.max_tokens,
+                    temperature=self.config.temperature,
+                    messages=[{"role": "user", "content": composed_prompt}],
+                )
             call_elapsed = time.perf_counter() - call_start
             LOGGER.info("Claude API call timing: pass=%s duration_seconds=%.2f", pass_name, call_elapsed)
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                cache_creation_tokens = getattr(usage, "cache_creation_input_tokens", None)
+                cache_read_tokens = getattr(usage, "cache_read_input_tokens", None)
+                LOGGER.debug(
+                    "Claude prompt cache usage: pass=%s cache_creation_input_tokens=%s cache_read_input_tokens=%s",
+                    pass_name,
+                    cache_creation_tokens,
+                    cache_read_tokens,
+                )
             text_blocks: list[str] = []
             for block in response.content:
                 block_type = getattr(block, "type", None)
@@ -203,10 +238,35 @@ class ClaudeAPIBackend(LocalLLMBackend):
         parts.extend(
             [
                 "Input payload JSON:",
-                json.dumps(payload, ensure_ascii=False, indent=2),
+                _compact_json(payload),
             ]
         )
         return "\n\n".join(parts)
+
+    def _split_prompt(
+        self,
+        pass_name: str,
+        prompt_text: str,
+        payload: Dict[str, Any],
+        schema: Dict[str, Any] | None = None,
+    ) -> tuple[str, str]:
+        static_parts = [
+            "You are a JSON-only backend for an auditable document analysis pipeline.",
+            "Return a single valid JSON object only. No markdown, no code fences, no explanation.",
+            f"Pass: {pass_name}",
+            "Prompt instructions:",
+            prompt_text,
+        ]
+        if schema is not None:
+            static_parts.extend(
+                [
+                    "Your output MUST conform to this JSON schema:",
+                    self._summarize_schema_required_fields(schema),
+                ]
+            )
+        static_part = "\n\n".join(static_parts)
+        dynamic_part = "Input payload JSON:\n" + _compact_json(payload)
+        return static_part, dynamic_part
 
     def _extract_json_object(self, text: str) -> Dict[str, Any]:
         """Extract a JSON object from model output."""

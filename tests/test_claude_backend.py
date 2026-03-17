@@ -4,7 +4,7 @@ import sys
 
 import pytest
 
-from src.claude_backend import ClaudeAPIBackend, ClaudeBackendConfig
+from src.claude_backend import ClaudeAPIBackend, ClaudeBackendConfig, _compact_json
 from src.exceptions import BackendError
 
 
@@ -139,3 +139,58 @@ def test_generate_json_retries_then_succeeds(monkeypatch: pytest.MonkeyPatch) ->
 
     assert parsed == {"ok": True}
     assert calls["n"] == 2
+
+
+def test_prompt_caching_uses_system_parameter(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    captured: dict[str, object] = {}
+
+    class _Module:
+        class Anthropic:
+            def __init__(self, api_key: str) -> None:
+                self.messages = self
+
+            def create(self, **kwargs: object) -> object:
+                captured.update(kwargs)
+                usage = type("Usage", (), {"cache_creation_input_tokens": 12, "cache_read_input_tokens": 34})()
+                return type("Response", (), {"content": [{"type": "text", "text": '{"ok": true}'}], "usage": usage})()
+
+    monkeypatch.setitem(sys.modules, "anthropic", _Module())
+    backend = ClaudeAPIBackend(ClaudeBackendConfig(api_key="test-key", enable_prompt_caching=True))
+
+    parsed = backend.generate_json(pass_name="p", prompt_text="x", payload={"a": 1})
+
+    assert parsed == {"ok": True}
+    assert "system" in captured
+    assert captured["messages"] == [{"role": "user", "content": "Input payload JSON:\n{\"a\":1}"}]
+
+
+def test_prompt_caching_disabled_uses_single_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    captured: dict[str, object] = {}
+
+    class _Module:
+        class Anthropic:
+            def __init__(self, api_key: str) -> None:
+                self.messages = self
+
+            def create(self, **kwargs: object) -> object:
+                captured.update(kwargs)
+                return type("Response", (), {"content": [{"type": "text", "text": '{"ok": true}'}]})()
+
+    monkeypatch.setitem(sys.modules, "anthropic", _Module())
+    backend = ClaudeAPIBackend(ClaudeBackendConfig(api_key="test-key", enable_prompt_caching=False))
+
+    parsed = backend.generate_json(pass_name="p", prompt_text="x", payload={"a": 1})
+
+    assert parsed == {"ok": True}
+    assert "system" not in captured
+    assert isinstance(captured.get("messages"), list)
+    assert captured["messages"]
+
+
+def test_compact_json_no_indent() -> None:
+    compact = _compact_json({"a": 1, "b": {"c": 2}})
+
+    assert compact == '{"a":1,"b":{"c":2}}'
+    assert "\n" not in compact
