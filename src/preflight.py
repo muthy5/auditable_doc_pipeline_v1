@@ -35,7 +35,8 @@ def check_ollama(base_url: str, model: str, timeout_s: float = 5.0) -> Capabilit
     if not isinstance(payload, dict):
         return CapabilityStatus(False, f"Unexpected Ollama /api/tags payload type: {type(payload).__name__}")
     models = [item.get("name", "") for item in payload.get("models", []) if isinstance(item, dict)]
-    if model not in models:
+    accepted_model_names = {model, f"{model}:latest"} if ":" not in model else {model, model.split(":", 1)[0]}
+    if not any(candidate in models for candidate in accepted_model_names):
         return CapabilityStatus(False, f"Ollama model '{model}' not found. Available: {models}")
     return CapabilityStatus(True, "Ollama server reachable and selected model is installed.")
 
@@ -50,6 +51,7 @@ def run_preflight(
     ollama_model: str,
     ollama_timeout_s: float = 5.0,
     openai_api_key: str = "",
+    openai_base_url: str = "https://api.openai.com/v1",
 ) -> dict[str, CapabilityStatus]:
     """Collect runtime dependency/backend checks for CLI and Streamlit."""
     statuses: dict[str, CapabilityStatus] = {
@@ -74,8 +76,12 @@ def run_preflight(
         statuses["ollama_backend"] = check_ollama(ollama_base_url, ollama_model, timeout_s=ollama_timeout_s)
 
     if backend == "openai":
-        if not openai_api_key.strip():
+        normalized_openai_url = openai_base_url.strip().lower()
+        is_local_openai = "localhost" in normalized_openai_url or "127.0.0.1" in normalized_openai_url
+        if not openai_api_key.strip() and not is_local_openai:
             statuses["openai_backend"] = CapabilityStatus(False, "OpenAI-compatible backend unavailable: missing API key.")
+        elif not openai_api_key.strip():
+            statuses["openai_backend"] = CapabilityStatus(True, "OpenAI-compatible backend configured for local endpoint without API key.")
         else:
             statuses["openai_backend"] = CapabilityStatus(True, "OpenAI-compatible backend configured.")
 
