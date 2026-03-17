@@ -563,48 +563,97 @@ class RuleBasedDemoBackend(LocalLLMBackend):
     def _generate_plan(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         merge = payload["merge"]
         dependency = payload["dependency_audit"]
+        materials = merge.get("global_entities", {}).get("materials", []) or merge.get("all_inputs_required", [])
+        outputs = merge.get("all_outputs_produced", [])
+        input_steps = merge.get("all_steps", [])
+        step_text = " ".join(str(step.get("text", "")) for step in input_steps).lower()
+        evidence_text = " ".join([*materials, *outputs, step_text]).lower()
+        lemonade_context = any(term in evidence_text for term in ["lemon", "lemons", "lemonade"])
+
+        unsupported_demo = not input_steps and not materials and not outputs
+        if unsupported_demo:
+            return {
+                "doc_id": merge["doc_id"],
+                "plan": {
+                    "objective": {
+                        "text": "Summarize available content without fabricating an operational plan.",
+                        "support": ["original_document"],
+                    },
+                    "materials_and_quantities": [],
+                    "equipment_required": [],
+                    "prerequisites": [],
+                    "steps": [],
+                    "time_estimates": {
+                        "total_estimated": "unknown",
+                        "confidence": "unknown",
+                    },
+                    "warnings_and_safety": [
+                        {
+                            "text": "Demo backend cannot reliably transform this document type; use Claude or Ollama for full analysis.",
+                            "severity": "warning",
+                            "support": ["original_document"],
+                        }
+                    ],
+                    "quality_checkpoints": [],
+                    "blocking_items": [
+                        {
+                            "text": "Insufficient procedural structure detected in the uploaded text for reliable demo planning.",
+                            "support": ["original_document"],
+                        }
+                    ],
+                    "assumptions_made": [
+                        {
+                            "text": "Demo mode is limited to simple, explicit procedural inputs.",
+                            "support": ["demo_backend"],
+                        }
+                    ],
+                    "cost_indicators": [],
+                    "contingencies": [
+                        {
+                            "if_condition": "Document is non-procedural or ambiguous",
+                            "then_action": "Switch to Claude or Ollama backend for full analysis.",
+                            "support": ["demo_backend"],
+                        }
+                    ],
+                },
+            }
 
         plan_steps = [
             {
-                "step_number": 1,
-                "text": "Gather all ingredients and tools.",
+                "step_number": index,
+                "text": str(step.get("text", "")).strip() or "Unspecified step",
                 "status": "original",
-                "support": ["original_document"],
-            },
-            {
-                "step_number": 2,
-                "text": "Cut and juice the lemons into the pitcher.",
-                "status": "added",
-                "support": ["dependency_audit:block_dep_001"],
-                "warning": "This is a required transformation step missing in the original plan.",
-            },
-            {
-                "step_number": 3,
-                "text": "Combine lemon juice, sugar, and water until dissolved.",
-                "status": "original",
-                "support": ["original_document"],
-            },
-            {
-                "step_number": 4,
-                "text": "Add ice and serve cold.",
-                "status": "original",
-                "support": ["original_document"],
-            },
+                "support": [str(step.get("step_id", "original_document"))],
+            }
+            for index, step in enumerate(input_steps, start=1)
         ]
 
         warnings = [
             {
-                "text": "Original plan omitted a juicing step, which blocks successful output.",
-                "severity": "warning",
-                "support": ["block_dep_001"],
+                "text": "No blocking dependency issues detected.",
+                "severity": "info",
+                "support": ["dependency_audit"],
             }
         ]
-        if not dependency.get("blocking_dependencies"):
+
+        if lemonade_context and dependency.get("blocking_dependencies"):
+            plan_steps.insert(
+                1,
+                {
+                    "step_number": 2,
+                    "text": "Cut and juice the lemons into the pitcher.",
+                    "status": "added",
+                    "support": ["dependency_audit:block_dep_001"],
+                    "warning": "This is a required transformation step missing in the original plan.",
+                },
+            )
+            for index, step in enumerate(plan_steps, start=1):
+                step["step_number"] = index
             warnings = [
                 {
-                    "text": "No blocking dependency issues detected.",
-                    "severity": "info",
-                    "support": ["dependency_audit"],
+                    "text": "Original plan omitted a juicing step, which blocks successful output.",
+                    "severity": "warning",
+                    "support": ["block_dep_001"],
                 }
             ]
 
@@ -612,23 +661,20 @@ class RuleBasedDemoBackend(LocalLLMBackend):
             "doc_id": merge["doc_id"],
             "plan": {
                 "objective": {
-                    "text": "Prepare lemonade from listed ingredients.",
+                    "text": "Prepare the documented procedure using listed inputs.",
                     "support": ["original_document"],
                 },
                 "materials_and_quantities": [
-                    {"item": "Lemons", "quantity": "6", "source": "stated"},
-                    {"item": "Sugar", "quantity": "1 cup", "source": "stated"},
-                    {"item": "Water", "quantity": "4 cups", "source": "stated"},
-                    {"item": "Ice", "quantity": "2 cups", "source": "stated"},
+                    {"item": str(item), "quantity": "unknown", "source": "stated"}
+                    for item in materials
                 ],
-                "equipment_required": [
-                    {"item": "Pitcher", "source": "inferred"}
-                ],
+                "equipment_required": [],
                 "prerequisites": [
                     {
-                        "text": "Ingredient preparation must happen before mixing.",
-                        "support": ["ord_001"],
+                        "text": str(dep.get("before", "Earlier steps")) + " must occur before " + str(dep.get("after", "later steps")) + ".",
+                        "support": [str(dep.get("constraint_id", "dependency_audit"))],
                     }
+                    for dep in dependency.get("ordering_constraints", [])
                 ],
                 "steps": plan_steps,
                 "time_estimates": {
@@ -636,32 +682,21 @@ class RuleBasedDemoBackend(LocalLLMBackend):
                     "confidence": "unknown",
                 },
                 "warnings_and_safety": warnings,
-                "quality_checkpoints": [
-                    {
-                        "after_step": 3,
-                        "check": "Taste for sugar balance before adding ice.",
-                        "support": ["inferred_from_audit"],
-                    }
+                "quality_checkpoints": [],
+                "blocking_items": [
+                    {"text": str(dep.get("reason", "Unspecified dependency issue.")), "support": [str(dep.get("dependency_id", "dependency_audit"))]}
+                    for dep in dependency.get("blocking_dependencies", [])
                 ],
-                "blocking_items": [],
                 "assumptions_made": [
                     {
-                        "text": "User has basic kitchen tools available.",
-                        "support": ["inferred_from_audit"],
+                        "text": "Only explicitly stated steps and materials were used in demo mode.",
+                        "support": ["demo_backend"],
                     }
                 ],
                 "cost_indicators": [
-                    {"item": "Lemons", "cost": "unknown", "source": "unknown"},
-                    {"item": "Sugar", "cost": "unknown", "source": "unknown"},
-                    {"item": "Water", "cost": "unknown", "source": "unknown"},
-                    {"item": "Ice", "cost": "unknown", "source": "unknown"},
+                    {"item": str(item), "cost": "unknown", "source": "unknown"}
+                    for item in materials
                 ],
-                "contingencies": [
-                    {
-                        "if_condition": "Lemonade is too tart",
-                        "then_action": "Add small increments of sugar and stir.",
-                        "support": ["inferred_from_audit"],
-                    }
-                ],
+                "contingencies": [],
             },
         }

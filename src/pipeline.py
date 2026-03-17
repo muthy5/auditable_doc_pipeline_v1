@@ -31,7 +31,7 @@ LOGGER = logging.getLogger(__name__)
 
 def utc_run_id() -> str:
     """Return a UTC timestamp run identifier."""
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
 
 
 class AuditablePipeline:

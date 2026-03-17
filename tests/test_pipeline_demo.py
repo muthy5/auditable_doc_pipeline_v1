@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -138,8 +139,6 @@ def test_non_strict_schema_failure_writes_fallback_and_report_status(tmp_path: P
 
 
 def test_resume_marks_fallback_pass_as_resumed(tmp_path: Path) -> None:
-    import json
-
     repo_root = Path(__file__).resolve().parents[1]
     input_path = repo_root / "examples" / "lemonade_plan_missing_juicing.txt"
     pipeline = AuditablePipeline(repo_root=repo_root, backend_name="demo")
@@ -157,3 +156,60 @@ def test_resume_marks_fallback_pass_as_resumed(tmp_path: Path) -> None:
     resumed_run_dir = second_pipeline.run(input_path=input_path, runs_dir=tmp_path / "runs", run_dir=first_run_dir, resume=True, strict=False)
     report = json.loads((resumed_run_dir / "report.json").read_text(encoding="utf-8"))
     assert report["per_pass_status"]["03_schema_audit"] == "completed_with_fallback"
+
+
+def test_demo_lemonade_regression_still_reports_missing_juicing(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    input_path = repo_root / "examples" / "lemonade_plan_missing_juicing.txt"
+    pipeline = AuditablePipeline(repo_root=repo_root, backend_name="demo")
+
+    run_dir = pipeline.run(input_path=input_path, runs_dir=tmp_path / "runs")
+    dependency = json.loads((run_dir / "passes" / "04_dependency_audit.json").read_text(encoding="utf-8"))
+
+    assert any("juice" in item["item"].lower() for item in dependency["missing_prerequisites"])
+
+
+def test_demo_non_lemonade_input_does_not_leak_sample_content(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    input_path = repo_root / "examples" / "non_procedural_dossier.txt"
+    pipeline = AuditablePipeline(repo_root=repo_root, backend_name="demo")
+
+    run_dir = pipeline.run(input_path=input_path, runs_dir=tmp_path / "runs")
+    plan = json.loads((run_dir / "final" / "plan.json").read_text(encoding="utf-8"))["plan"]
+    final_answer = (run_dir / "final" / "final_answer.md").read_text(encoding="utf-8").lower()
+    plan_blob = json.dumps(plan).lower()
+    source_text = input_path.read_text(encoding="utf-8").lower()
+
+    forbidden = ["lemonade", "lemon", "lemons", "sugar", "water", "ice", "juicing"]
+    for term in forbidden:
+        if term not in source_text:
+            assert term not in plan_blob
+            assert term not in final_answer
+
+
+def test_demo_current_run_isolation_uses_new_input(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    pipeline = AuditablePipeline(repo_root=repo_root, backend_name="demo")
+
+    lemonade_run = pipeline.run(input_path=repo_root / "examples" / "lemonade_plan_missing_juicing.txt", runs_dir=tmp_path / "runs")
+    dossier_run = pipeline.run(input_path=repo_root / "examples" / "non_procedural_dossier.txt", runs_dir=tmp_path / "runs")
+
+    lemonade_plan = (lemonade_run / "final" / "plan.md").read_text(encoding="utf-8").lower()
+    dossier_plan = (dossier_run / "final" / "plan.md").read_text(encoding="utf-8").lower()
+
+    assert "8 lemons" in lemonade_plan
+    assert "8 lemons" not in dossier_plan
+    assert "cannot reliably transform this document type" in dossier_plan
+
+
+def test_demo_non_procedural_document_fails_safe_with_limitation_message(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    input_path = repo_root / "examples" / "non_procedural_dossier.txt"
+    pipeline = AuditablePipeline(repo_root=repo_root, backend_name="demo")
+
+    run_dir = pipeline.run(input_path=input_path, runs_dir=tmp_path / "runs")
+    plan = json.loads((run_dir / "final" / "plan.json").read_text(encoding="utf-8"))["plan"]
+    warnings_text = "\n".join(item["text"] for item in plan["warnings_and_safety"]).lower()
+
+    assert "cannot reliably transform this document type" in warnings_text
+    assert plan["steps"] == []
