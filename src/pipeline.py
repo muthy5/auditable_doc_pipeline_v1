@@ -343,7 +343,7 @@ class AuditablePipeline:
                 "metadata": {"author": None, "created_at": None, "user_goal": user_goal},
             }
             self.pass_runner.validate_with_schema("document.schema.json", document)
-            (input_dir / "document.json").write_text(json.dumps(document, indent=2), encoding="utf-8")
+            (input_dir / "document.json").write_text(json.dumps(document, separators=(",", ":")), encoding="utf-8")
 
             chunk_target_min_words, chunk_target_max_words, chunk_hard_max_words = self._resolve_chunk_settings(fast=fast)
             chunks = chunk_document(
@@ -363,7 +363,7 @@ class AuditablePipeline:
                 avg_words_per_chunk,
                 total_words,
             )
-            (input_dir / "chunks.json").write_text(json.dumps(chunks, indent=2), encoding="utf-8")
+            (input_dir / "chunks.json").write_text(json.dumps(chunks, separators=(",", ":")), encoding="utf-8")
 
             def has_output(pass_name: str) -> bool:
                 path_map = {
@@ -433,7 +433,7 @@ class AuditablePipeline:
                         "reason": classification["reason"],
                     })
                     selected_document_type = str(classification.get("selected_document_type", DEFAULT_DOCUMENT_TYPE))
-                    classification_output_path.write_text(json.dumps(classification, indent=2), encoding="utf-8")
+                    classification_output_path.write_text(json.dumps(classification, separators=(",", ":")), encoding="utf-8")
             else:
                 if resume and has_output("00_normalize_request"):
                     normalize = json.loads((passes_dir / "00_normalize_request.json").read_text())
@@ -455,7 +455,7 @@ class AuditablePipeline:
                             "reason": classification["reason"],
                         })
                         selected_document_type = str(classification.get("selected_document_type", DEFAULT_DOCUMENT_TYPE))
-                        classification_output_path.write_text(json.dumps(classification, indent=2), encoding="utf-8")
+                        classification_output_path.write_text(json.dumps(classification, separators=(",", ":")), encoding="utf-8")
                 else:
                     pass  # handled below
 
@@ -470,7 +470,7 @@ class AuditablePipeline:
                     "selected_document_type": document_type,
                 }
                 if not (resume and classification_output_path.exists()):
-                    classification_output_path.write_text(json.dumps(classification, indent=2), encoding="utf-8")
+                    classification_output_path.write_text(json.dumps(classification, separators=(",", ":")), encoding="utf-8")
 
             document_type_schema = load_schema(
                 self.repo_paths.schemas_dir / "document_types",
@@ -479,21 +479,37 @@ class AuditablePipeline:
 
             web_context: list[dict[str, Any]] = []
             web_context_output = passes_dir / "search_web_context.json"
-            if resume and web_context_output.exists():
-                web_context = json.loads(web_context_output.read_text(encoding="utf-8")).get("web_context", [])
-            else:
-                web_context = self._build_web_context(normalize=normalize, document_text=text, strict=strict)
-                if web_context:
-                    web_context_output.write_text(json.dumps({"web_context": web_context}, indent=2, ensure_ascii=False), encoding="utf-8")
-
             reference_context: list[dict[str, Any]] = []
             retrieval_context_output = passes_dir / "retrieval_context.json"
-            if resume and retrieval_context_output.exists():
+
+            need_web = not (resume and web_context_output.exists())
+            need_ref = not (resume and retrieval_context_output.exists())
+
+            if not need_web:
+                web_context = json.loads(web_context_output.read_text(encoding="utf-8")).get("web_context", [])
+            if not need_ref:
                 reference_context = json.loads(retrieval_context_output.read_text(encoding="utf-8")).get("reference_context", [])
-            else:
-                reference_context = self._build_reference_context(normalize=normalize, user_goal=user_goal)
+
+            if need_web and need_ref and self._is_api_backend():
+                LOGGER.info("Building web context and reference context in parallel")
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    f_web = executor.submit(self._build_web_context, normalize=normalize, document_text=text, strict=strict)
+                    f_ref = executor.submit(self._build_reference_context, normalize=normalize, user_goal=user_goal)
+                    web_context = f_web.result()
+                    reference_context = f_ref.result()
+                if web_context:
+                    web_context_output.write_text(json.dumps({"web_context": web_context}, ensure_ascii=False), encoding="utf-8")
                 if reference_context:
-                    retrieval_context_output.write_text(json.dumps({"reference_context": reference_context}, indent=2, ensure_ascii=False), encoding="utf-8")
+                    retrieval_context_output.write_text(json.dumps({"reference_context": reference_context}, ensure_ascii=False), encoding="utf-8")
+            else:
+                if need_web:
+                    web_context = self._build_web_context(normalize=normalize, document_text=text, strict=strict)
+                    if web_context:
+                        web_context_output.write_text(json.dumps({"web_context": web_context}, ensure_ascii=False), encoding="utf-8")
+                if need_ref:
+                    reference_context = self._build_reference_context(normalize=normalize, user_goal=user_goal)
+                    if reference_context:
+                        retrieval_context_output.write_text(json.dumps({"reference_context": reference_context}, ensure_ascii=False), encoding="utf-8")
 
             extraction_dir = passes_dir / "01_extract_chunk"
             extraction_dir.mkdir(parents=True, exist_ok=True)
@@ -668,22 +684,35 @@ class AuditablePipeline:
                 {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "evidence_audit": evidence_audit, "web_context": web_context, "reference_context": reference_context},
             )
             synthesis = run_or_load("07_synthesize", "07_synthesize.txt", "07_synthesize.schema.json", synthesis_payload)
+
+            # Run plan generation and validation in parallel — they are independent after synthesis
             plan_payload = self._trim_if_claude(
                 trim_for_plan,
                 {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "evidence_audit": evidence_audit, "synthesis": synthesis, "web_context": web_context, "reference_context": reference_context},
             )
-            plan = run_or_load("09_generate_plan", "09_generate_plan.txt", "09_generate_plan.schema.json", plan_payload)
 
-            validation = validate_final_output(synthesis, normalize, schema_audit, dependency_audit, assumption_audit, evidence_audit, load_schema(self.repo_paths.schemas_dir, "07_synthesize.schema.json"))
-            if resume and has_output("08_validate_final"):
-                existing_validation = json.loads((passes_dir / "08_validate_final.json").read_text())
-                self.pass_runner.mark_pass_status("08_validate_final", _status_from_payload(existing_validation, resumed=True), **_metadata_from_payload(existing_validation))
+            def _run_validation() -> dict[str, Any]:
+                v = validate_final_output(synthesis, normalize, schema_audit, dependency_audit, assumption_audit, evidence_audit, load_schema(self.repo_paths.schemas_dir, "07_synthesize.schema.json"))
+                if resume and has_output("08_validate_final"):
+                    existing_v = json.loads((passes_dir / "08_validate_final.json").read_text())
+                    self.pass_runner.mark_pass_status("08_validate_final", _status_from_payload(existing_v, resumed=True), **_metadata_from_payload(existing_v))
+                else:
+                    LOGGER.info("Starting pass 08_validate_final")
+                    self.pass_runner.write_validated_json("08_validate_final.schema.json", v, passes_dir / "08_validate_final.json", "08_validate_final", strict)
+                (final_dir / "final_answer.json").write_text(json.dumps(synthesis, indent=2), encoding="utf-8")
+                (final_dir / "final_answer.md").write_text(render_final_answer_markdown(synthesis), encoding="utf-8")
+                return v
+
+            if self._is_api_backend():
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    f_plan = executor.submit(run_or_load, "09_generate_plan", "09_generate_plan.txt", "09_generate_plan.schema.json", plan_payload)
+                    f_val = executor.submit(_run_validation)
+                    plan = f_plan.result()
+                    validation = f_val.result()
             else:
-                LOGGER.info("Starting pass 08_validate_final")
-                self.pass_runner.write_validated_json("08_validate_final.schema.json", validation, passes_dir / "08_validate_final.json", "08_validate_final", strict)
+                plan = run_or_load("09_generate_plan", "09_generate_plan.txt", "09_generate_plan.schema.json", plan_payload)
+                validation = _run_validation()
 
-            (final_dir / "final_answer.json").write_text(json.dumps(synthesis, indent=2), encoding="utf-8")
-            (final_dir / "final_answer.md").write_text(render_final_answer_markdown(synthesis), encoding="utf-8")
             (final_dir / "plan.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
             (final_dir / "plan.md").write_text(render_plan_markdown(plan), encoding="utf-8")
 
