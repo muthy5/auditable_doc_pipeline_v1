@@ -632,12 +632,12 @@ class AuditablePipeline:
             )
 
             exports_dir = self.repo_paths.root / "exports"
-            if exports_dir.exists() and exports_dir.is_dir():
+            if exports_dir.exists():
                 try:
-                    export_path = export_run(run_dir=run_dir, export_dir=exports_dir)
-                    LOGGER.info("Run artifacts exported to exports/%s", export_path.name)
-                except Exception as error:  # noqa: BLE001 - export failures must never block pipeline completion
-                    LOGGER.warning("Run artifact export failed: %s", error)
+                    export_run(run_dir=run_dir, export_dir=exports_dir)
+                    LOGGER.info("Run artifacts exported to exports/%s", run_dir.name)
+                except Exception as exc:  # noqa: BLE001 - export failures must never block pipeline completion
+                    LOGGER.warning("Run export failed: %s", exc)
             return run_dir
         finally:
             root_logger.removeHandler(file_handler)
