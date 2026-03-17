@@ -28,6 +28,7 @@ class PipelineConfig:
     openai_base_url: str = "https://api.openai.com/v1"
     brave_api_key: str = ""
     enable_search: bool = False
+    enable_fallback_search: bool = False
     reference_dir: str = ""
 
 
