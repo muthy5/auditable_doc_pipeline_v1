@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import traceback
-from dataclasses import asdict
 from pathlib import Path
 
 from src.config import PipelineConfig
@@ -47,9 +47,9 @@ def main() -> None:
     fast = job["fast"]
     parallel_chunks = job.get("parallel_chunks")
 
-    # Write initial status
+    # Write initial status including PID so the UI can check liveness
     status_path = runs_dir / "bg_status.json"
-    _write_status(status_path, {"state": "running", "error": None, "run_dir": None})
+    _write_status(status_path, {"state": "running", "error": None, "run_dir": None, "pid": os.getpid()})
 
     try:
         pipeline = AuditablePipeline(

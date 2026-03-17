@@ -727,6 +727,10 @@ class AuditablePipeline:
                         chunk_index, extraction = future.result()
                         chunk_extractions[chunk_index] = extraction
 
+            # Preserve original ordering — use index-based access, not filtered list
+            failed_chunk_indices = [i for i, item in enumerate(chunk_extractions) if item is None]
+            if failed_chunk_indices:
+                LOGGER.error("Chunk extraction failed for %d chunk(s) at indices: %s", len(failed_chunk_indices), failed_chunk_indices)
             ordered_chunk_extractions: list[dict[str, Any]] = [item for item in chunk_extractions if item is not None]
             resumed_chunks = 0
             fallback_chunks = 0
@@ -734,7 +738,7 @@ class AuditablePipeline:
                 out = extraction_dir / f"{chunk['chunk_id']}.json"
                 if resume and out.exists():
                     resumed_chunks += 1
-                payload = ordered_chunk_extractions[idx] if idx < len(ordered_chunk_extractions) else {}
+                payload = chunk_extractions[idx] if chunk_extractions[idx] is not None else {}
                 if isinstance(payload, dict) and (payload.get("_fallback_generated") or payload.get("_schema_validation_failed")):
                     fallback_chunks += 1
             if fallback_chunks > 0:
@@ -756,7 +760,11 @@ class AuditablePipeline:
 
             self._write_checkpoint(passes_dir, "02_merge_global", "completed")
 
-            chunk_summaries = [{"chunk_id": item["chunk_id"], "section_role": item["section_role"]} for item in ordered_chunk_extractions]
+            chunk_summaries = [
+                {"chunk_id": item["chunk_id"], "section_role": item["section_role"]}
+                for item in chunk_extractions
+                if item is not None
+            ]
 
             # --- Fallback data source: detect gaps and enrich web_context ---
             fallback_context_output = passes_dir / "fallback_web_context.json"
