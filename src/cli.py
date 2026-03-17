@@ -55,11 +55,14 @@ def _ensure_preflight_or_exit(args: argparse.Namespace, parser: argparse.Argumen
         ollama_base_url=args.ollama_base_url,
         ollama_model=args.ollama_model,
         ollama_timeout_s=args.ollama_timeout_s,
+        openai_api_key=args.openai_api_key or os.environ.get("OPENAI_API_KEY", ""),
     )
     if args.backend == "claude" and not statuses["claude_backend"].available:
         parser.error(statuses["claude_backend"].message)
     if args.backend == "ollama" and not statuses["ollama_backend"].available:
         parser.error(statuses["ollama_backend"].message)
+    if args.backend == "openai" and not statuses["openai_backend"].available:
+        parser.error(statuses["openai_backend"].message)
     if args.enable_search and not statuses["web_search"].available:
         parser.error(statuses["web_search"].message)
 
@@ -69,7 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input", required=True, help="Path to the input text document.")
     parser.add_argument("--runs-dir", default="runs", help="Directory where run artifacts will be written.")
     parser.add_argument("--run-dir", default="", help="Existing run directory (used with --resume).")
-    parser.add_argument("--backend", default="demo", choices=["demo", "ollama", "claude"], help="Backend to use.")
+    parser.add_argument("--backend", default="demo", choices=["demo", "ollama", "claude", "openai"], help="Backend to use.")
     parser.add_argument("--doc-id", default="doc_001", help="Document ID.")
     parser.add_argument("--title", default=None, help="Optional document title.")
     parser.add_argument("--goal", default="Identify missing information and organize the document into an actionable structure.")
@@ -82,6 +85,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ollama-max-retries", default=2, type=_parse_ollama_max_retries)
     parser.add_argument("--claude-api-key", default="")
     parser.add_argument("--claude-model", default="claude-sonnet-4-20250514")
+    parser.add_argument("--openai-api-key", default="", help="OpenAI-compatible API key (or set OPENAI_API_KEY).")
+    parser.add_argument("--openai-model", default="gpt-4o", help="Model name for OpenAI-compatible backend.")
+    parser.add_argument("--openai-base-url", default="https://api.openai.com/v1", help="Base URL for OpenAI-compatible API.")
     parser.add_argument("--enable-search", action="store_true", help="Enable Brave web search enrichment.")
     parser.add_argument("--brave-api-key", default="", help="Brave Search API key (or set BRAVE_API_KEY).")
     parser.add_argument("--reference-dir", default=None, help="Directory containing local reference docs for retrieval.")
@@ -125,6 +131,9 @@ def main() -> None:
         ollama_max_retries=args.ollama_max_retries,
         claude_api_key=args.claude_api_key,
         claude_model=args.claude_model,
+        openai_api_key=args.openai_api_key or os.environ.get("OPENAI_API_KEY", ""),
+        openai_model=args.openai_model,
+        openai_base_url=args.openai_base_url,
         enable_search=args.enable_search,
         brave_api_key=args.brave_api_key or os.environ.get("BRAVE_API_KEY", ""),
         reference_dir=args.reference_dir or "",

@@ -15,6 +15,7 @@ from .exceptions import PipelineError
 from .document_classifier import DEFAULT_DOCUMENT_TYPE, SUPPORTED_DOCUMENT_TYPES, classify_document_with_metadata
 from .llm_interface import RuleBasedDemoBackend
 from .markdown_writer import render_final_answer_markdown, render_plan_markdown
+from .openai_backend import OpenAIBackendConfig, OpenAICompatibleBackend
 from .prompts import load_prompt
 from .search import BraveSearchClient
 from .merge_engine import merge_chunk_extractions
@@ -75,6 +76,13 @@ class AuditablePipeline:
                 model=self.config.claude_model,
             )
             self.backend = ClaudeAPIBackend(config=claude_config)
+        elif backend_name == "openai":
+            openai_config = OpenAIBackendConfig(
+                api_key=self.config.openai_api_key,
+                model=self.config.openai_model,
+                base_url=self.config.openai_base_url,
+            )
+            self.backend = OpenAICompatibleBackend(config=openai_config)
         else:
             raise ValueError(f"Unsupported backend: {backend_name}")
         self.pass_runner = PassRunner(self.backend, self.repo_paths.prompts_dir, self.repo_paths.schemas_dir)
@@ -193,7 +201,7 @@ class AuditablePipeline:
 
     def _resolve_chunk_settings(self, fast: bool = False) -> tuple[int, int, int]:
         """Return backend-aware chunk sizing settings."""
-        if self.backend_name == "claude":
+        if self.backend_name in ("claude", "openai"):
             if fast:
                 return (3500, 5500, 7000)
             return (3000, 5000, 6000)
@@ -211,7 +219,7 @@ class AuditablePipeline:
 
     def _default_parallel_chunks(self) -> int:
         """Return backend-aware default for chunk parallelism."""
-        return 4 if self.backend_name == "claude" else 1
+        return 4 if self.backend_name in ("claude", "openai") else 1
 
     def run(
         self,

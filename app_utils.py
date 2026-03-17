@@ -217,5 +217,5 @@ def is_streamlit_cloud_environment(env: dict[str, str] | None = None) -> bool:
 def get_available_backends(cloud_mode: bool) -> list[str]:
     """Return UI backend choices based on deployment environment."""
     if cloud_mode:
-        return ["demo", "claude"]
-    return ["demo", "ollama", "claude"]
+        return ["demo", "claude", "openai"]
+    return ["demo", "ollama", "claude", "openai"]

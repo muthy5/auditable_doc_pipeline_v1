@@ -6,11 +6,17 @@ from app_utils import get_available_backends, is_streamlit_cloud_environment
 
 
 def test_cloud_mode_hides_ollama() -> None:
-    assert get_available_backends(cloud_mode=True) == ["demo", "claude"]
+    backends = get_available_backends(cloud_mode=True)
+    assert "ollama" not in backends
+    assert "demo" in backends
+    assert "claude" in backends
+    assert "openai" in backends
 
 
 def test_local_mode_keeps_ollama() -> None:
-    assert "ollama" in get_available_backends(cloud_mode=False)
+    backends = get_available_backends(cloud_mode=False)
+    assert "ollama" in backends
+    assert "openai" in backends
 
 
 def test_cloud_environment_detection() -> None:

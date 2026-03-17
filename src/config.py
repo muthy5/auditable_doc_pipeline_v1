@@ -19,6 +19,9 @@ class PipelineConfig:
     ollama_max_retries: int = 2
     claude_api_key: str = ""
     claude_model: str = "claude-sonnet-4-20250514"
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o"
+    openai_base_url: str = "https://api.openai.com/v1"
     brave_api_key: str = ""
     enable_search: bool = False
     reference_dir: str = ""
