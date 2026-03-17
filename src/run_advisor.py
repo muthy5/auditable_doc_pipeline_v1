@@ -201,12 +201,40 @@ def generate_run_advice(runs_dir: Path) -> RunAdvisorReport:
             crash_point_distribution[last_pass] = crash_point_distribution.get(last_pass, 0) + 1
             checkpoint_payload, checkpoint_ok = _safe_load_json(run_dir / "passes" / "checkpoint.json")
             if checkpoint_ok and isinstance(checkpoint_payload, dict):
+                checkpoint_pass = checkpoint_payload.get("last_completed_pass")
+                if isinstance(checkpoint_pass, str) and checkpoint_pass != "unknown":
+                    # Prefer the checkpoint's pass name over filesystem scan
+                    crash_point_distribution[last_pass] = crash_point_distribution.get(last_pass, 1) - 1
+                    if crash_point_distribution.get(last_pass, 0) <= 0:
+                        crash_point_distribution.pop(last_pass, None)
+                    crash_point_distribution[checkpoint_pass] = crash_point_distribution.get(checkpoint_pass, 0) + 1
                 byte_size = checkpoint_payload.get("byte_size")
                 url_count = checkpoint_payload.get("url_count")
                 if isinstance(byte_size, (int, float)) and isinstance(url_count, int):
                     warnings.append(
                         f"Run {run_dir.name} incomplete near '{last_pass}' (checkpoint byte_size={byte_size}, url_count={url_count})."
                     )
+
+            # Learn from partial report.json written by interrupted runs
+            if report_ok and isinstance(report_payload, dict) and report_payload.get("incomplete"):
+                backend = str(report_payload.get("backend", "unknown"))
+                duration = float(report_payload.get("total_duration_seconds", 0.0) or 0.0)
+                if duration > 0:
+                    total_times += duration
+                per_pass_status = report_payload.get("per_pass_status", {})
+                if isinstance(per_pass_status, dict):
+                    for pass_name, status in per_pass_status.items():
+                        if status not in ("not_started",):
+                            status_counts[pass_name] = status_counts.get(pass_name, 0) + 1
+                        if status == "completed_with_fallback":
+                            fallback_counts[pass_name] = fallback_counts.get(pass_name, 0) + 1
+                schema_validation_failures = report_payload.get("schema_validation_failure_list", [])
+                if isinstance(schema_validation_failures, list):
+                    for pass_name in _extract_failed_passes([str(item) for item in schema_validation_failures]):
+                        schema_fail_pass_counts[pass_name] = schema_fail_pass_counts.get(pass_name, 0) + 1
+                error_msg = report_payload.get("error")
+                if isinstance(error_msg, str) and error_msg:
+                    warnings.append(f"Run {run_dir.name} failed with error: {error_msg[:200]}")
 
     if complete_runs > 0:
         for pass_name, fallback_count in sorted(fallback_counts.items()):

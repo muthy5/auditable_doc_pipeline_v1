@@ -22,7 +22,7 @@ from .search import BraveSearchClient
 from .merge_engine import merge_chunk_extractions
 from .ollama_backend import OllamaBackendConfig, OllamaLocalBackend
 from .pass_runner import PassRunner
-from .report import write_run_report
+from .report import write_run_report, write_partial_run_report
 from .run_exporter import export_run
 from .run_advisor import generate_run_advice
 from .text_extractor import extract_text_from_path
@@ -255,6 +255,20 @@ class AuditablePipeline:
         """Return True for hosted API backends suitable for extra concurrency."""
         return self.backend_name in {"claude", "openai"}
 
+    @staticmethod
+    def _write_checkpoint(passes_dir: Path, pass_name: str, status: str, extra: dict[str, Any] | None = None) -> None:
+        """Write a checkpoint file after each pass so incomplete runs are recoverable."""
+        checkpoint: dict[str, Any] = {
+            "last_completed_pass": pass_name,
+            "status": status,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        if extra:
+            checkpoint.update(extra)
+        (passes_dir / "checkpoint.json").write_text(
+            json.dumps(checkpoint, separators=(",", ":"), ensure_ascii=False), encoding="utf-8"
+        )
+
     def _trim_if_claude(self, fn: Callable[[dict[str, Any]], dict[str, Any]], payload: dict[str, Any]) -> dict[str, Any]:
         """Apply payload trimming to reduce token usage for all API backends."""
         if self.backend_name == "demo":
@@ -300,10 +314,47 @@ class AuditablePipeline:
         for p in [input_dir, passes_dir, final_dir, logs_dir]:
             p.mkdir(parents=True, exist_ok=True)
 
+        # Metadata used by both success and partial-failure report paths
+        _run_meta: dict[str, Any] = {
+            "run_id": run_id,
+            "backend": self.backend_name,
+            "model_name": getattr(self.backend, "config", None).model if hasattr(self.backend, "config") else "demo",
+            "input_path": str(input_path),
+            "fast_mode": fast,
+            "strict": strict,
+            "parallel_chunks": parallel_chunks,
+            "document_type_requested": document_type,
+        }
+
         file_handler = logging.FileHandler(logs_dir / "run.log", encoding="utf-8")
         file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
         root_logger = logging.getLogger()
         root_logger.addHandler(file_handler)
+
+        def _write_partial_report(error_message: str | None = None) -> None:
+            """Write partial timing and report so incomplete runs are still learnable."""
+            try:
+                elapsed = time.perf_counter() - start_total
+                self.pass_runner.write_timings(run_dir / "timing.json", elapsed)
+                per_pass_status: dict[str, str] = {}
+                per_pass_details: dict[str, dict[str, Any]] = {}
+                for name, _, _ in self.PASS_SEQUENCE:
+                    outcome = self.pass_runner.pass_outcomes.get(name, {"status": "not_started"})
+                    per_pass_status[name] = str(outcome.get("status", "not_started"))
+                    per_pass_details[name] = outcome
+                partial_data = {
+                    **_run_meta,
+                    "total_duration_seconds": elapsed,
+                    "per_pass_status": per_pass_status,
+                    "per_pass_details": per_pass_details,
+                    "schema_validation_failure_list": self.pass_runner.validation_failures,
+                    "incomplete": True,
+                }
+                if error_message:
+                    partial_data["error"] = error_message
+                write_partial_run_report(run_dir, partial_data)
+            except Exception:  # noqa: BLE001 - never let partial-report writing crash the pipeline
+                LOGGER.warning("Failed to write partial run report for incomplete run %s", run_id)
 
         def _run_advisor_background() -> None:
             """Run advisor analysis in background to avoid blocking pipeline start."""
@@ -459,6 +510,8 @@ class AuditablePipeline:
                 else:
                     pass  # handled below
 
+            self._write_checkpoint(passes_dir, "00_normalize_request", "completed", {"classify_done": True})
+
             if document_type != "auto":
                 if document_type not in SUPPORTED_DOCUMENT_TYPES:
                     raise PipelineError(f"Unsupported document type '{document_type}'. Supported: {sorted(SUPPORTED_DOCUMENT_TYPES)}")
@@ -565,6 +618,8 @@ class AuditablePipeline:
             else:
                 self.pass_runner.mark_pass_status("01_extract_chunk", "completed")
 
+            self._write_checkpoint(passes_dir, "01_extract_chunk", "completed", {"chunks_processed": total_chunks})
+
             merge = merge_chunk_extractions(doc_id, ordered_chunk_extractions)
             if resume and has_output("02_merge_global"):
                 merge = json.loads((passes_dir / "02_merge_global.json").read_text())
@@ -572,6 +627,8 @@ class AuditablePipeline:
             else:
                 LOGGER.info("Starting pass 02_merge_global")
                 merge = self.pass_runner.write_validated_json("02_merge_global.schema.json", merge, passes_dir / "02_merge_global.json", "02_merge_global", strict)
+
+            self._write_checkpoint(passes_dir, "02_merge_global", "completed")
 
             chunk_summaries = [{"chunk_id": item["chunk_id"], "section_role": item["section_role"]} for item in ordered_chunk_extractions]
 
@@ -643,6 +700,8 @@ class AuditablePipeline:
                     "04_dependency_audit.schema.json",
                     dependency_audit_payload,
                 )
+            self._write_checkpoint(passes_dir, "04_dependency_audit", "completed")
+
             if fast:
                 LOGGER.info("Fast mode enabled: skipping passes 05_assumption_audit and 06_evidence_audit")
                 assumption_audit = {"implicit_assumptions_found": [], "uncertainty_points": [], "blocking_assumptions": []}
@@ -684,6 +743,8 @@ class AuditablePipeline:
                 {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "evidence_audit": evidence_audit, "web_context": web_context, "reference_context": reference_context},
             )
             synthesis = run_or_load("07_synthesize", "07_synthesize.txt", "07_synthesize.schema.json", synthesis_payload)
+
+            self._write_checkpoint(passes_dir, "07_synthesize", "completed")
 
             # Run plan generation and validation in parallel — they are independent after synthesis
             plan_payload = self._trim_if_claude(
@@ -750,6 +811,10 @@ class AuditablePipeline:
                 except Exception as error:  # noqa: BLE001 - export failures must never block pipeline completion
                     LOGGER.warning("Run artifact export failed: %s", error)
             return run_dir
+        except Exception as exc:
+            LOGGER.error("Pipeline run interrupted or failed: %s", exc)
+            _write_partial_report(error_message=str(exc))
+            raise
         finally:
             root_logger.removeHandler(file_handler)
             file_handler.close()
