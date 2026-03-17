@@ -241,18 +241,12 @@ class AuditablePipeline:
         """Execute the full pipeline and return the run directory."""
         if "fast_mode" in kwargs:
             fast_mode_value = kwargs.pop("fast_mode")
-            if isinstance(fast_mode_value, bool):
-                fast = fast_mode_value
-            elif isinstance(fast_mode_value, str):
-                normalized = fast_mode_value.strip().lower()
-                if normalized in {"1", "true", "yes", "on"}:
-                    fast = True
-                elif normalized in {"0", "false", "no", "off", ""}:
-                    fast = False
-                else:
-                    raise ValueError(f"Invalid fast_mode value: {fast_mode_value!r}")
-            else:
-                fast = bool(fast_mode_value)
+            # Reject non-bool types: bool("false") is truthy and would silently skip audit passes 05 and 06.
+            if not isinstance(fast_mode_value, bool):
+                raise TypeError(
+                    f"fast_mode must be a bool, got {type(fast_mode_value).__name__}: {fast_mode_value!r}"
+                )
+            fast = fast_mode_value
         if kwargs:
             unexpected = ", ".join(sorted(kwargs.keys()))
             raise TypeError(f"run() got unexpected keyword argument(s): {unexpected}")
