@@ -35,9 +35,12 @@ st.title("Auditable Document Pipeline")
 
 def _secret_or_env(name: str) -> str:
     try:
-        return str(st.secrets.get(name, os.environ.get(name, "")))
-    except StreamlitSecretNotFoundError:
-        return os.environ.get(name, "")
+        value = st.secrets.get(name, None)
+        if value is not None:
+            return str(value)
+    except (StreamlitSecretNotFoundError, TypeError, KeyError, FileNotFoundError, Exception):  # noqa: BLE001
+        pass
+    return os.environ.get(name, "")
 
 
 
