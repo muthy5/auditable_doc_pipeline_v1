@@ -405,13 +405,13 @@ def main() -> None:
         if cloud_mode:
             st.caption("Ollama is hidden in cloud mode. Use demo/Claude here, or self-host locally to use Ollama.")
 
-        claude_api_key = ""
+        claude_api_key = default_claude_api_key
         claude_model = "claude-sonnet-4-20250514"
         if backend == "claude":
             claude_api_key = st.text_input("Claude API Key", type="password", value=default_claude_api_key)
             claude_model = st.text_input("Claude model", value="claude-sonnet-4-20250514")
 
-        openai_api_key = ""
+        openai_api_key = default_openai_api_key
         openai_model = "gpt-4o"
         openai_base_url = "https://api.openai.com/v1"
         if backend == "openai":
@@ -429,7 +429,7 @@ def main() -> None:
         fast_mode = st.toggle("Fast mode", value=(backend in ("claude", "openai")), help="Use larger chunks, process chunks in parallel, and skip passes 05/06.")
         parallel_chunks = st.number_input("Parallel chunks", min_value=1, max_value=16, value=4 if backend in ("claude", "openai") else 1, step=1)
         enable_search = st.toggle("Web Search", value=False)
-        brave_api_key = ""
+        brave_api_key = default_brave_api_key
         if enable_search:
             brave_api_key = st.text_input("Brave API Key", type="password", value=default_brave_api_key)
         st.markdown("---")
@@ -450,11 +450,11 @@ def main() -> None:
         preflight_statuses = run_preflight(
             backend=backend,
             enable_search=enable_search,
-            claude_api_key=claude_api_key or default_claude_api_key,
-            brave_api_key=brave_api_key or default_brave_api_key,
+            claude_api_key=claude_api_key,
+            brave_api_key=brave_api_key,
             ollama_base_url=ollama_base_url,
             ollama_model=ollama_model,
-            openai_api_key=openai_api_key or default_openai_api_key,
+            openai_api_key=openai_api_key,
         )
         _render_capability_status(preflight_statuses)
 
@@ -500,15 +500,15 @@ def main() -> None:
                     resolved_reference_dir = str(local_reference_dir)
 
             config = PipelineConfig(
-                claude_api_key=claude_api_key or default_claude_api_key,
+                claude_api_key=claude_api_key,
                 claude_model=claude_model,
-                openai_api_key=openai_api_key or default_openai_api_key,
+                openai_api_key=openai_api_key,
                 openai_model=openai_model,
                 openai_base_url=openai_base_url,
                 ollama_base_url=ollama_base_url,
                 ollama_model=ollama_model,
                 enable_search=enable_search,
-                brave_api_key=brave_api_key or default_brave_api_key,
+                brave_api_key=brave_api_key,
                 reference_dir=resolved_reference_dir,
             )
 
