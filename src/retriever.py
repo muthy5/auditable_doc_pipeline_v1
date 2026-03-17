@@ -39,7 +39,8 @@ class LocalFileRetriever:
         self._index_files()
 
     def _read_file(self, path: Path) -> str:
-        return extract_text_from_path(path)
+        result = extract_text_from_path(path)
+        return result.text if result.ok else ""
 
     def _iter_reference_files(self) -> list[Path]:
         if not self.reference_dir.exists() or not self.reference_dir.is_dir():
