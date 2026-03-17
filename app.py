@@ -354,6 +354,24 @@ def _read_bg_status(runs_dir: Path) -> dict[str, Any] | None:
         return None
 
 
+def _is_process_alive(pid: int) -> bool:
+    """Check whether a process with the given PID is still running."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ProcessLookupError):
+        return False
+
+
+def _clear_bg_status(runs_dir: Path) -> None:
+    """Remove the background status file so future sessions start clean."""
+    status_path = runs_dir / "bg_status.json"
+    try:
+        status_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _poll_filesystem_progress(runs_dir: Path) -> tuple[int, str, float]:
     """Poll the runs directory for pass completion. Returns (completed, current_pass, overall_progress)."""
     pass_completion = {name: False for name in PASS_SEQUENCE}
@@ -425,11 +443,19 @@ def _launch_background_pipeline(
     job_path.write_text(json.dumps(job), encoding="utf-8")
 
     runner_script = Path(__file__).parent / "background_runner.py"
-    subprocess.Popen(
-        [sys.executable, str(runner_script), str(job_path)],
-        start_new_session=True,
-        stdout=open(runs_dir / "bg_stdout.log", "w"),
-        stderr=open(runs_dir / "bg_stderr.log", "w"),
+    with open(runs_dir / "bg_stdout.log", "w") as stdout_f, \
+         open(runs_dir / "bg_stderr.log", "w") as stderr_f:
+        proc = subprocess.Popen(
+            [sys.executable, str(runner_script), str(job_path)],
+            start_new_session=True,
+            stdout=stdout_f,
+            stderr=stderr_f,
+        )
+    # Write a preliminary status with PID in case the runner takes time to start
+    status_path = runs_dir / "bg_status.json"
+    status_path.write_text(
+        json.dumps({"state": "running", "error": None, "run_dir": None, "pid": proc.pid}),
+        encoding="utf-8",
     )
 
 
@@ -443,6 +469,7 @@ def _wait_for_pipeline(runs_dir: Path) -> tuple[Path | None, Exception | None]:
 
         if bg_status and bg_status.get("state") == "completed":
             run_dir_str = bg_status.get("run_dir")
+            _clear_bg_status(runs_dir)
             if run_dir_str:
                 progress.progress(1.0, text="Pipeline complete")
                 status_placeholder.success("Pipeline completed successfully")
@@ -452,8 +479,17 @@ def _wait_for_pipeline(runs_dir: Path) -> tuple[Path | None, Exception | None]:
 
         if bg_status and bg_status.get("state") == "failed":
             error_msg = bg_status.get("error", "Unknown error")
+            _clear_bg_status(runs_dir)
             st.error(f"Pipeline failed: {error_msg}")
             return None, Exception(error_msg)
+
+        # Detect dead background process to avoid polling forever
+        if bg_status and bg_status.get("state") == "running":
+            pid = bg_status.get("pid")
+            if pid is not None and not _is_process_alive(pid):
+                _clear_bg_status(runs_dir)
+                st.error("Pipeline background process died unexpectedly. Check bg_stderr.log for details.")
+                return None, Exception("background process died")
 
         completed, current, overall_progress = _poll_filesystem_progress(runs_dir)
         progress.progress(overall_progress, text=f"Running {current}...")
@@ -578,11 +614,17 @@ def main() -> None:
     persistent_runs = _persistent_runs_dir()
     bg_status = _read_bg_status(persistent_runs)
     if bg_status and bg_status.get("state") == "running":
-        st.info("A pipeline is running in the background. Reconnecting...")
-        run_dir, error = _wait_for_pipeline(persistent_runs)
-        if not error and run_dir is not None:
-            _render_results(run_dir)
-        return
+        pid = bg_status.get("pid")
+        if pid is not None and not _is_process_alive(pid):
+            # Previous run's process is dead — clean up stale status
+            _clear_bg_status(persistent_runs)
+            st.warning("A previous pipeline run did not finish. You can start a new one.")
+        else:
+            st.info("A pipeline is running in the background. Reconnecting...")
+            run_dir, error = _wait_for_pipeline(persistent_runs)
+            if not error and run_dir is not None:
+                _render_results(run_dir)
+            return
 
     # --- Show previous completed runs ---
     _render_previous_runs(persistent_runs)
