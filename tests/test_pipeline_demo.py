@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from src.pipeline import AuditablePipeline
 from src.run_inspector import inspect_run
 
@@ -241,12 +243,10 @@ def test_demo_non_procedural_document_fails_safe_with_limitation_message(tmp_pat
     assert plan["steps"] == []
 
 
-def test_demo_pipeline_fast_mode_string_false_does_not_skip_passes(tmp_path: Path) -> None:
+def test_demo_pipeline_fast_mode_string_false_raises_type_error(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     input_path = repo_root / "examples" / "lemonade_plan_missing_juicing.txt"
 
     pipeline = AuditablePipeline(repo_root=repo_root, backend_name="demo")
-    run_dir = pipeline.run(input_path=input_path, runs_dir=tmp_path / "runs", fast_mode="false")
-
-    assert (run_dir / "passes" / "05_assumption_audit.json").exists()
-    assert (run_dir / "passes" / "06_evidence_audit.json").exists()
+    with pytest.raises(TypeError, match="fast_mode must be a bool"):
+        pipeline.run(input_path=input_path, runs_dir=tmp_path / "runs", fast_mode="false")
