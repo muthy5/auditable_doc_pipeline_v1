@@ -508,7 +508,7 @@ def main() -> None:
                 ollama_base_url=ollama_base_url,
                 ollama_model=ollama_model,
                 enable_search=enable_search,
-                brave_api_key=brave_api_key,
+                brave_api_key=brave_api_key or default_brave_api_key,
                 reference_dir=resolved_reference_dir,
             )
 
