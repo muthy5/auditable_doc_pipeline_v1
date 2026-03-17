@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import inspect
@@ -13,6 +14,8 @@ import streamlit as st
 from streamlit.errors import StreamlitSecretNotFoundError
 
 import app_utils
+import src.config
+importlib.reload(src.config)  # ensure Streamlit hot-reload picks up config changes
 from src.config import PipelineConfig
 from src.document_classifier import SUPPORTED_DOCUMENT_TYPES
 from src.pipeline import AuditablePipeline
