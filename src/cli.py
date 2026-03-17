@@ -96,7 +96,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reference-dir", default=None, help="Directory containing local reference docs for retrieval.")
     parser.add_argument("--strict", action="store_true", help="Halt on first JSON schema validation failure.")
     parser.add_argument("--parallel-chunks", default=None, type=int, help="Number of chunk workers for pass 01 (default: 4 for claude, 1 for demo/ollama).")
-    parser.add_argument("--fast", action="store_true", help="Fast mode: larger chunks, parallel extraction, and skip passes 05/06.")
+    parser.add_argument("--fast", action="store_true", default=True, help="Fast mode (default): larger chunks, parallel extraction, and skip passes 05/06.")
+    parser.add_argument("--thorough", action="store_true", help="Thorough mode: run all audit passes including assumption and evidence audits.")
     parser.add_argument("--resume", action="store_true", help="Resume an existing run from first incomplete pass.")
     parser.add_argument("--dry-run", action="store_true", help="Print execution plan and exit.")
     parser.add_argument("--verbose", action="store_true", help="Set log level to DEBUG.")
@@ -158,7 +159,7 @@ def main() -> None:
         strict=args.strict,
         document_type=args.document_type,
         parallel_chunks=args.parallel_chunks,
-        fast=args.fast,
+        fast=not args.thorough,
     )
     print(run_dir)
 

@@ -58,5 +58,5 @@ def test_brave_search_client_retries_and_returns_empty_on_failure(monkeypatch: p
 def test_search_queries_schema_accepts_valid_payload() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     schema = load_schema(repo_root / "schemas", "search_queries.schema.json")
-    payload = {"queries": ["query one", "query two", "query three"]}
+    payload = {"queries": ["query one", "query two"]}
     Draft202012Validator(schema).validate(payload)

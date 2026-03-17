@@ -7,8 +7,8 @@
   "properties": {
     "queries": {
       "type": "array",
-      "minItems": 3,
-      "maxItems": 5,
+      "minItems": 1,
+      "maxItems": 2,
       "items": {
         "type": "string",
         "minLength": 3
