@@ -108,6 +108,7 @@ class PassRunner:
         input_payload: dict[str, Any],
         output_path: Path,
         strict: bool = True,
+        model_override: str | None = None,
     ) -> dict[str, Any]:
         """Run one model-backed pass and validate its output."""
         start = time.perf_counter()
@@ -117,6 +118,7 @@ class PassRunner:
             prompt_text=load_prompt(self.prompts_dir, prompt_filename),
             payload=input_payload,
             schema=schema,
+            model_override=model_override,
         )
         try:
             Draft202012Validator(schema).validate(output)

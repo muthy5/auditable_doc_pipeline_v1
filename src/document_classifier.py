@@ -22,7 +22,13 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def classify_document_with_metadata(text: str, backend: LocalLLMBackend, *, repo_root: Path | None = None) -> dict[str, Any]:
+def classify_document_with_metadata(
+    text: str,
+    backend: LocalLLMBackend,
+    *,
+    repo_root: Path | None = None,
+    model_override: str | None = None,
+) -> dict[str, Any]:
     """Run LLM-backed classification and apply fallback selection rules."""
     resolved_root = repo_root or _repo_root()
     try:
@@ -31,6 +37,7 @@ def classify_document_with_metadata(text: str, backend: LocalLLMBackend, *, repo
             prompt_text=load_prompt(resolved_root / "prompts", "classify_document.txt"),
             payload={"text": text},
             schema=load_schema(resolved_root / "schemas", "classify_document.schema.json"),
+            model_override=model_override,
         )
     except Exception as exc:  # noqa: BLE001 - fallback to default type for non-strict pipeline behavior
         output = {
@@ -58,6 +65,15 @@ def classify_document_with_metadata(text: str, backend: LocalLLMBackend, *, repo
     return {**output, "selected_document_type": selected_document_type}
 
 
-def classify_document(text: str, backend: LocalLLMBackend, *, repo_root: Path | None = None) -> str:
-    """Classify document text into one supported type; fallback to procedural_plan on uncertainty."""
-    return str(classify_document_with_metadata(text, backend, repo_root=repo_root).get("selected_document_type", DEFAULT_DOCUMENT_TYPE))
+def classify_document(
+    text: str,
+    backend: LocalLLMBackend,
+    *,
+    repo_root: Path | None = None,
+    model_override: str | None = None,
+) -> str:
+    """Classify document text; fallback to procedural_plan on uncertainty."""
+    result = classify_document_with_metadata(
+        text, backend, repo_root=repo_root, model_override=model_override,
+    )
+    return str(result.get("selected_document_type", DEFAULT_DOCUMENT_TYPE))

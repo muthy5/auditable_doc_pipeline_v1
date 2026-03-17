@@ -19,7 +19,8 @@ class PipelineConfig:
     ollama_max_retries: int = 2
     claude_api_key: str = ""
     claude_model: str = "claude-sonnet-4-20250514"
-    claude_tokens_per_minute: int = 25000
+    claude_tokens_per_minute: int = 80000
+    claude_fast_model: str = "claude-haiku-4-5-20251001"
     claude_max_retries: int = 4
     enable_prompt_caching: bool = True
     openai_api_key: str = ""

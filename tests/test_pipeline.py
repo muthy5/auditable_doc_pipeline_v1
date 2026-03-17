@@ -38,6 +38,7 @@ class _FakePassRunner:
         payload: dict,
         _output_path: Path,
         _strict: bool,
+        model_override: str | None = None,
     ) -> dict:
         self.calls.append((pass_name, payload))
         if pass_name == "00_normalize_request":
@@ -85,9 +86,11 @@ class _FakeExecutor:
     def __exit__(self, exc_type, exc, tb) -> None:
         return None
 
-    def submit(self, fn, pass_name: str, *args):
+    def submit(self, fn, *args, **kwargs):
+        # Identify the pass name from args for tracing
+        pass_name = args[0] if args and isinstance(args[0], str) else "unknown"
         self._trace.append(("submit", pass_name))
-        value = fn(pass_name, *args)
+        value = fn(*args, **kwargs)
         return _FakeFuture(pass_name, value, self._trace)
 
 
@@ -143,7 +146,9 @@ def test_passes_03_04_run_concurrently(monkeypatch: pytest.MonkeyPatch, tmp_path
             parallel_chunks=1,
         )
 
-    assert trace[:4] == [
+    # Filter trace to only 03/04 entries (normalize+classify may also appear)
+    audit_trace = [(action, name) for action, name in trace if name in ("03_schema_audit", "04_dependency_audit")]
+    assert audit_trace == [
         ("submit", "03_schema_audit"),
         ("submit", "04_dependency_audit"),
         ("result", "03_schema_audit"),

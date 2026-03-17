@@ -55,7 +55,7 @@ def test_pipeline_runs_with_explicit_document_type(tmp_path: Path) -> None:
 
 def test_classifier_falls_back_on_malformed_backend_payload() -> None:
     class BrokenBackend:
-        def generate_json(self, pass_name, prompt_text, payload, schema=None):  # noqa: ANN001
+        def generate_json(self, pass_name, prompt_text, payload, schema=None, model_override=None):  # noqa: ANN001
             return ["not", "a", "mapping"]
 
     document_type = classify_document("text", BrokenBackend())
@@ -72,9 +72,9 @@ def test_pipeline_auto_classification_uses_pipeline_repo_root(tmp_path: Path, mo
 
     original = __import__("src.pipeline", fromlist=["classify_document_with_metadata"]).classify_document_with_metadata
 
-    def wrapped(text, backend, *, repo_root=None):  # noqa: ANN001
+    def wrapped(text, backend, *, repo_root=None, model_override=None):  # noqa: ANN001
         captured_roots.append(repo_root)
-        return original(text, backend, repo_root=repo_root)
+        return original(text, backend, repo_root=repo_root, model_override=model_override)
 
     monkeypatch.setattr("src.pipeline.classify_document_with_metadata", wrapped)
 

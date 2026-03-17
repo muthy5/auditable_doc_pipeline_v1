@@ -86,6 +86,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ollama-max-retries", default=2, type=_parse_ollama_max_retries)
     parser.add_argument("--claude-api-key", default="")
     parser.add_argument("--claude-model", default="claude-sonnet-4-20250514")
+    parser.add_argument("--claude-fast-model", default="claude-haiku-4-5-20251001", help="Faster Claude model for simple passes (normalize, classify).")
+    parser.add_argument("--claude-tokens-per-minute", default=80000, type=int, help="Token-per-minute budget for Claude rate limiter (default: 80000).")
     parser.add_argument("--openai-api-key", default="", help="OpenAI-compatible API key (or set OPENAI_API_KEY).")
     parser.add_argument("--openai-model", default="gpt-4o", help="Model name for OpenAI-compatible backend.")
     parser.add_argument("--openai-base-url", default="https://api.openai.com/v1", help="Base URL for OpenAI-compatible API.")
@@ -132,6 +134,8 @@ def main() -> None:
         ollama_max_retries=args.ollama_max_retries,
         claude_api_key=args.claude_api_key,
         claude_model=args.claude_model,
+        claude_fast_model=args.claude_fast_model,
+        claude_tokens_per_minute=args.claude_tokens_per_minute,
         openai_api_key=args.openai_api_key or os.environ.get("OPENAI_API_KEY", ""),
         openai_model=args.openai_model,
         openai_base_url=args.openai_base_url,

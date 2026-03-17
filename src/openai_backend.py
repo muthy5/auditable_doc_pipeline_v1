@@ -75,6 +75,7 @@ class OpenAICompatibleBackend(LocalLLMBackend):
         prompt_text: str,
         payload: Dict[str, Any],
         schema: Dict[str, Any] | None = None,
+        model_override: str | None = None,
     ) -> Dict[str, Any]:
         """Generate a JSON response from an OpenAI-compatible API with retry logic."""
         composed_prompt = self._compose_prompt(pass_name, prompt_text, payload, schema)

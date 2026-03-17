@@ -69,42 +69,129 @@ class TokenWindowTracker:
         return sleep_seconds
 
 
-def trim_for_synthesis(full_payload: dict[str, Any]) -> dict[str, Any]:
-    """Trim pass input for synthesis while preserving key audit outputs."""
-    payload = {
-        "task": full_payload.get("task"),
-        "merge": full_payload.get("merge"),
+def _sub(payload: dict[str, Any], key: str, field: str) -> list:
+    """Extract a nested list field from a sub-dict of payload."""
+    return payload.get(key, {}).get(field, [])
+
+
+def _trim_merge_for_audit(merge: dict[str, Any]) -> dict[str, Any]:
+    """Lighter merge: drop verbose source_refs from facts."""
+    trimmed: dict[str, Any] = {}
+    for key, value in merge.items():
+        if key == "all_explicit_facts" and isinstance(value, list):
+            trimmed[key] = [
+                {
+                    "fact_id": f.get("fact_id", ""),
+                    "text": f.get("text", ""),
+                    "source_chunk_ids": f.get("source_chunk_ids", []),
+                }
+                for f in value
+            ]
+        elif key == "cross_reference_graph" and isinstance(value, list):
+            trimmed[key] = [
+                {
+                    "source_chunk_id": r.get("source_chunk_id", ""),
+                    "ref_text": r.get("ref_text", ""),
+                }
+                for r in value
+            ]
+        else:
+            trimmed[key] = value
+    return trimmed
+
+
+def trim_for_schema_audit(p: dict[str, Any]) -> dict[str, Any]:
+    """Trim payload for schema audit pass."""
+    return {
+        "task": p.get("task"),
+        "merge": _trim_merge_for_audit(p.get("merge", {})),
+        "chunk_summaries": p.get("chunk_summaries"),
+        "document_type": p.get("document_type"),
+        "document_type_schema": p.get("document_type_schema"),
+        "web_context": p.get("web_context"),
+        "reference_context": p.get("reference_context"),
+    }
+
+
+def trim_for_dependency_audit(p: dict[str, Any]) -> dict[str, Any]:
+    """Trim payload for dependency audit."""
+    return {
+        "task": p.get("task"),
+        "merge": _trim_merge_for_audit(p.get("merge", {})),
+        "web_context": p.get("web_context"),
+        "reference_context": p.get("reference_context"),
+    }
+
+
+def trim_for_assumption_audit(p: dict[str, Any]) -> dict[str, Any]:
+    """Trim payload for assumption audit."""
+    return {
+        "task": p.get("task"),
+        "merge": _trim_merge_for_audit(p.get("merge", {})),
         "schema_audit": {
-            "blocking_gaps": full_payload.get("schema_audit", {}).get("blocking_gaps", []),
-            "nonblocking_gaps": full_payload.get("schema_audit", {}).get("nonblocking_gaps", []),
+            "blocking_gaps": _sub(p, "schema_audit", "blocking_gaps"),
+            "nonblocking_gaps": _sub(p, "schema_audit", "nonblocking_gaps"),
         },
         "dependency_audit": {
-            "blocking_dependencies": full_payload.get("dependency_audit", {}).get("blocking_dependencies", []),
-            "ordering_constraints": full_payload.get("dependency_audit", {}).get("ordering_constraints", []),
+            "blocking_dependencies": _sub(p, "dependency_audit", "blocking_dependencies"),
+            "ordering_constraints": _sub(p, "dependency_audit", "ordering_constraints"),
+        },
+        "web_context": p.get("web_context"),
+        "reference_context": p.get("reference_context"),
+    }
+
+
+def trim_for_evidence_audit(p: dict[str, Any]) -> dict[str, Any]:
+    """Trim payload for evidence audit."""
+    return {
+        "merge": _trim_merge_for_audit(p.get("merge", {})),
+        "schema_audit": {
+            "blocking_gaps": _sub(p, "schema_audit", "blocking_gaps"),
+        },
+        "dependency_audit": {
+            "blocking_dependencies": _sub(p, "dependency_audit", "blocking_dependencies"),
+        },
+        "web_context": p.get("web_context"),
+        "reference_context": p.get("reference_context"),
+    }
+
+
+def trim_for_synthesis(p: dict[str, Any]) -> dict[str, Any]:
+    """Trim pass input for synthesis while preserving key audit outputs."""
+    payload = {
+        "task": p.get("task"),
+        "merge": p.get("merge"),
+        "schema_audit": {
+            "blocking_gaps": _sub(p, "schema_audit", "blocking_gaps"),
+            "nonblocking_gaps": _sub(p, "schema_audit", "nonblocking_gaps"),
+        },
+        "dependency_audit": {
+            "blocking_dependencies": _sub(p, "dependency_audit", "blocking_dependencies"),
+            "ordering_constraints": _sub(p, "dependency_audit", "ordering_constraints"),
         },
         "assumption_audit": {
-            "blocking_assumptions": full_payload.get("assumption_audit", {}).get("blocking_assumptions", []),
-            "uncertainty_points": full_payload.get("assumption_audit", {}).get("uncertainty_points", []),
+            "blocking_assumptions": _sub(p, "assumption_audit", "blocking_assumptions"),
+            "uncertainty_points": _sub(p, "assumption_audit", "uncertainty_points"),
         },
         "evidence_audit": {
-            "claim_registry": full_payload.get("evidence_audit", {}).get("claim_registry", []),
+            "claim_registry": _sub(p, "evidence_audit", "claim_registry"),
         },
-        "web_context": full_payload.get("web_context"),
-        "reference_context": full_payload.get("reference_context"),
+        "web_context": p.get("web_context"),
+        "reference_context": p.get("reference_context"),
     }
     return strip_debug_keys(payload)
 
 
-def trim_for_plan(full_payload: dict[str, Any]) -> dict[str, Any]:
-    """Trim pass input for plan generation to avoid duplicate large context."""
+def trim_for_plan(p: dict[str, Any]) -> dict[str, Any]:
+    """Trim pass input for plan generation."""
     payload = {
-        "task": full_payload.get("task"),
-        "synthesis": full_payload.get("synthesis"),
+        "task": p.get("task"),
+        "synthesis": p.get("synthesis"),
         "schema_audit": {
-            "blocking_gaps": full_payload.get("schema_audit", {}).get("blocking_gaps", []),
+            "blocking_gaps": _sub(p, "schema_audit", "blocking_gaps"),
         },
         "dependency_audit": {
-            "blocking_dependencies": full_payload.get("dependency_audit", {}).get("blocking_dependencies", []),
+            "blocking_dependencies": _sub(p, "dependency_audit", "blocking_dependencies"),
         },
     }
     return strip_debug_keys(payload)

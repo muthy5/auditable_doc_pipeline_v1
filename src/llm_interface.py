@@ -13,6 +13,7 @@ class LocalLLMBackend(abc.ABC):
         prompt_text: str,
         payload: Dict[str, Any],
         schema: Dict[str, Any] | None = None,
+        model_override: str | None = None,
     ) -> Dict[str, Any]:
         raise NotImplementedError
 
@@ -24,6 +25,7 @@ class RuleBasedDemoBackend(LocalLLMBackend):
         prompt_text: str,
         payload: Dict[str, Any],
         schema: Dict[str, Any] | None = None,
+        model_override: str | None = None,
     ) -> Dict[str, Any]:
         dispatch = {
             "00_normalize_request": self._normalize_request,
@@ -412,7 +414,7 @@ class RuleBasedDemoBackend(LocalLLMBackend):
 
     def _evidence_audit(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         merge = payload["merge"]
-        schema_audit = payload["schema_audit"]
+        schema_audit = payload.get("schema_audit", {})
         claim_registry = []
         counts = {"supported": 0, "inferred": 0, "speculative": 0, "unknown": 0}
 
