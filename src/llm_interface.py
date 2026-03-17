@@ -259,11 +259,11 @@ class RuleBasedDemoBackend(LocalLLMBackend):
             "testing": ["test", "validation"],
             "deployment": ["deploy", "release"],
             "objective": ["objective", "goal"],
-            "materials": ["materials", "ingredients"],
-            "ingredient_preparation": ["juice", "squeez", "extract", "prep"],
-            "process_steps": ["step", "instructions"],
+            "inputs": ["materials", "ingredients", "inputs"],
+            "process_steps": ["step", "instructions", "procedure"],
             "outputs": ["output", "result"],
-            "validation_criteria": ["criteria", "quality", "done"],
+            "constraints": ["constraint", "limit", "requirement", "safety", "risk"],
+            "validation_criteria": ["criteria", "quality", "done", "verify", "acceptance"],
         }
 
         for section in expected_sections:
@@ -498,19 +498,25 @@ class RuleBasedDemoBackend(LocalLLMBackend):
         bottom_line_support.extend(g["gap_id"] for g in schema_audit.get("blocking_gaps", []))
         bottom_line_support.extend(d["dependency_id"] for d in dependency_audit.get("blocking_dependencies", []))
         bottom_line_support.extend(a["assumption_id"] for a in assumption_audit.get("blocking_assumptions", []))
+        if not bottom_line_support:
+            completeness_claim = next((c for c in evidence.get("claim_registry", []) if "operationally complete" in str(c.get("text", "")).lower()), None)
+            if completeness_claim and completeness_claim.get("claim_id"):
+                bottom_line_support.append(str(completeness_claim["claim_id"]))
 
+        present_sections = schema_audit.get("present_sections", [])
+        missing_sections = schema_audit.get("missing_sections", [])
         organized_structure = [
             {
                 "section": "Objective",
-                "content": "The document aims to describe a procedural plan and expected output.",
+                "content": "Assess operational completeness against the selected document schema.",
             },
             {
                 "section": "Present content",
-                "content": "The document includes ingredients, a simple step list, and an expected output.",
+                "content": "Detected sections: " + (", ".join(present_sections) if present_sections else "none clearly grounded in extracted evidence."),
             },
             {
                 "section": "Missing content",
-                "content": "The document omits at least one required transformation or quality-control element.",
+                "content": "Missing sections: " + (", ".join(str(item.get("section", "unknown")) for item in missing_sections) if missing_sections else "none."),
             },
         ]
 
