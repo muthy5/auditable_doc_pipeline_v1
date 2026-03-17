@@ -103,6 +103,16 @@ class AuditablePipeline:
             raise ValueError(f"Unsupported backend: {backend_name}")
         self.pass_runner = PassRunner(self.backend, self.repo_paths.prompts_dir, self.repo_paths.schemas_dir)
         self._fast_model: str | None = self.config.claude_fast_model if backend_name == "claude" else None
+        # Passes that need full-capability model (Sonnet); all others use fast model (Haiku)
+        self._sonnet_passes: frozenset[str] = frozenset({"07_synthesize", "09_generate_plan"})
+
+    def _model_for_pass(self, pass_name: str) -> str | None:
+        """Return the fast model for cheap passes, None (default Sonnet) for critical ones."""
+        if self._fast_model is None:
+            return None
+        if pass_name in self._sonnet_passes:
+            return None  # use default (Sonnet)
+        return self._fast_model  # use Haiku
 
     def _validate_required_files(self, repo_paths: RepoPaths) -> None:
         """Ensure all expected prompt and schema files exist."""
@@ -223,8 +233,8 @@ class AuditablePipeline:
         """Return backend-aware chunk sizing settings."""
         if self.backend_name in ("claude", "openai"):
             if fast:
-                return (3500, 5500, 7000)
-            return (3000, 5000, 6000)
+                return (5000, 7000, 9000)
+            return (3500, 5500, 7000)
         if fast:
             return (
                 max(self.config.chunk_target_min_words, 2000),
@@ -246,8 +256,8 @@ class AuditablePipeline:
         return self.backend_name in {"claude", "openai"}
 
     def _trim_if_claude(self, fn: Callable[[dict[str, Any]], dict[str, Any]], payload: dict[str, Any]) -> dict[str, Any]:
-        """Apply payload trimming only for Claude backend."""
-        if self.backend_name != "claude":
+        """Apply payload trimming to reduce token usage for all API backends."""
+        if self.backend_name == "demo":
             return payload
         return fn(payload)
 
@@ -507,6 +517,7 @@ class AuditablePipeline:
                     {"task": normalize, "chunk": chunk, "web_context": web_context, "reference_context": reference_context},
                     out,
                     strict,
+                    model_override=self._model_for_pass("01_extract_chunk"),
                 )
                 return index, extraction
 
@@ -565,7 +576,7 @@ class AuditablePipeline:
                     estimated_tokens = estimate_payload_tokens(payload)
                     LOGGER.debug("Pass %s estimated input tokens: %d", pass_name, estimated_tokens)
                 LOGGER.info("Starting pass %s", pass_name)
-                return self.pass_runner.run_model_pass(pass_name, prompt, schema, payload, output_path, strict)
+                return self.pass_runner.run_model_pass(pass_name, prompt, schema, payload, output_path, strict, model_override=self._model_for_pass(pass_name))
 
             schema_audit_payload = {
                 "task": normalize,

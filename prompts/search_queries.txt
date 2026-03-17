@@ -4,7 +4,7 @@ Given:
 - The normalized task JSON (goal, constraints, missing critical inputs).
 - The original document text.
 
-Produce 3 to 5 short, targeted web queries that would retrieve up-to-date references needed to complete or verify the plan.
+Produce 1 to 2 short, targeted web queries that would retrieve up-to-date references needed to complete or verify the plan.
 
 Rules:
 - Focus on current, practical, externally verifiable information.
