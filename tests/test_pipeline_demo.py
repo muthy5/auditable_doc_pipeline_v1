@@ -84,3 +84,14 @@ def test_cli_fast_mode_skips_noncritical_passes(tmp_path: Path) -> None:
     assert not (run_dir / "passes" / "05_assumption_audit.json").exists()
     assert not (run_dir / "passes" / "06_evidence_audit.json").exists()
     assert (run_dir / "passes" / "07_synthesize.json").exists()
+
+
+def test_demo_pipeline_accepts_fast_mode_alias(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    input_path = repo_root / "examples" / "lemonade_plan_missing_juicing.txt"
+
+    pipeline = AuditablePipeline(repo_root=repo_root, backend_name="demo")
+    run_dir = pipeline.run(input_path=input_path, runs_dir=tmp_path / "runs", fast_mode=True)
+
+    assert not (run_dir / "passes" / "05_assumption_audit.json").exists()
+    assert not (run_dir / "passes" / "06_evidence_audit.json").exists()

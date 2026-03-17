@@ -227,8 +227,15 @@ class AuditablePipeline:
         parallel_chunks: int | None = None,
         fast: bool = False,
         progress_callback: Callable[[int, int], None] | None = None,
+        **kwargs: Any,
     ) -> Path:
         """Execute the full pipeline and return the run directory."""
+        if "fast_mode" in kwargs:
+            fast = bool(kwargs.pop("fast_mode"))
+        if kwargs:
+            unexpected = ", ".join(sorted(kwargs.keys()))
+            raise TypeError(f"run() got unexpected keyword argument(s): {unexpected}")
+
         self.pass_runner.validation_failures.clear()
         start_total = time.perf_counter()
         run_id = run_dir.name if run_dir else utc_run_id()
