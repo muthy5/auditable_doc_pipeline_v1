@@ -29,6 +29,7 @@ class PipelineConfig:
     brave_api_key: str = ""
     enable_search: bool = False
     reference_dir: str = ""
+    budget_usd: float = 0.25
 
 
 @dataclass(frozen=True)

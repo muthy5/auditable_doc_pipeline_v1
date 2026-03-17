@@ -96,7 +96,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reference-dir", default=None, help="Directory containing local reference docs for retrieval.")
     parser.add_argument("--strict", action="store_true", help="Halt on first JSON schema validation failure.")
     parser.add_argument("--parallel-chunks", default=None, type=int, help="Number of chunk workers for pass 01 (default: 4 for claude, 1 for demo/ollama).")
-    parser.add_argument("--fast", action="store_true", help="Fast mode: larger chunks, parallel extraction, and skip passes 05/06.")
+    parser.add_argument("--fast", action="store_true", default=True, help="Fast mode (default): larger chunks, parallel extraction, and skip passes 05/06. Use --no-fast to disable.")
+    parser.add_argument("--no-fast", dest="fast", action="store_false", help="Disable fast mode: run all passes including 05/06.")
+    parser.add_argument("--budget", default=0.25, type=float, help="Maximum USD to spend per run (default: $0.25). Pipeline stops if exceeded.")
     parser.add_argument("--resume", action="store_true", help="Resume an existing run from first incomplete pass.")
     parser.add_argument("--dry-run", action="store_true", help="Print execution plan and exit.")
     parser.add_argument("--verbose", action="store_true", help="Set log level to DEBUG.")
@@ -142,6 +144,7 @@ def main() -> None:
         enable_search=args.enable_search,
         brave_api_key=args.brave_api_key or os.environ.get("BRAVE_API_KEY", ""),
         reference_dir=args.reference_dir or "",
+        budget_usd=args.budget,
     )
     repo_root = Path(__file__).resolve().parents[1]
     pipeline = AuditablePipeline(repo_root=repo_root, backend_name=args.backend, config=config)

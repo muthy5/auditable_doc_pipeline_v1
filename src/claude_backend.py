@@ -14,6 +14,50 @@ from .token_budget import TokenWindowTracker, estimate_tokens
 
 LOGGER = logging.getLogger(__name__)
 
+# Pricing per million tokens (USD) as of 2026-03.
+_MODEL_PRICING: dict[str, dict[str, float]] = {
+    "claude-haiku-4-5-20251001": {"input": 1.00, "output": 5.00, "cache_write": 1.25, "cache_read": 0.10},
+    "claude-sonnet-4-20250514": {"input": 3.00, "output": 15.00, "cache_write": 3.75, "cache_read": 0.30},
+}
+_DEFAULT_PRICING: dict[str, float] = {"input": 3.00, "output": 15.00, "cache_write": 3.75, "cache_read": 0.30}
+
+
+class CostTracker:
+    """Accumulate estimated USD cost across API calls."""
+
+    def __init__(self, budget: float = 0.25) -> None:
+        self.budget = budget
+        self.total_cost: float = 0.0
+        self._lock = __import__("threading").Lock()
+
+    def record(self, model: str, input_tokens: int, output_tokens: int,
+               cache_creation_tokens: int = 0, cache_read_tokens: int = 0) -> float:
+        pricing = _MODEL_PRICING.get(model, _DEFAULT_PRICING)
+        # Standard input tokens exclude cached tokens
+        standard_input = max(0, input_tokens - cache_creation_tokens - cache_read_tokens)
+        cost = (
+            standard_input * pricing["input"] / 1_000_000
+            + output_tokens * pricing["output"] / 1_000_000
+            + cache_creation_tokens * pricing["cache_write"] / 1_000_000
+            + cache_read_tokens * pricing["cache_read"] / 1_000_000
+        )
+        with self._lock:
+            self.total_cost += cost
+        LOGGER.info("Cost: pass=$%.4f cumulative=$%.4f budget=$%.2f model=%s", cost, self.total_cost, self.budget, model)
+        return cost
+
+    def check_budget(self, pass_name: str) -> None:
+        with self._lock:
+            current = self.total_cost
+        if current >= self.budget:
+            raise BudgetExceededError(
+                f"Budget of ${self.budget:.2f} exceeded (${current:.4f} spent) before pass '{pass_name}'."
+            )
+
+
+class BudgetExceededError(Exception):
+    """Raised when the run cost exceeds the configured budget."""
+
 
 def _compact_json(obj: Any) -> str:
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
@@ -42,7 +86,7 @@ class ClaudeBackendConfig:
 class ClaudeAPIBackend(LocalLLMBackend):
     """Backend that calls the Anthropic Claude API."""
 
-    def __init__(self, config: ClaudeBackendConfig, token_tracker: TokenWindowTracker | None = None) -> None:
+    def __init__(self, config: ClaudeBackendConfig, token_tracker: TokenWindowTracker | None = None, cost_tracker: CostTracker | None = None) -> None:
         if not config.api_key:
             raise ValueError(
                 "Claude API key must be provided via --claude-api-key or ANTHROPIC_API_KEY environment variable."
@@ -58,6 +102,7 @@ class ClaudeAPIBackend(LocalLLMBackend):
                 "Install it with: pip install anthropic"
             )
         self.token_tracker = token_tracker
+        self.cost_tracker = cost_tracker
 
     def generate_json(
         self,
@@ -69,6 +114,8 @@ class ClaudeAPIBackend(LocalLLMBackend):
     ) -> Dict[str, Any]:
         """Generate a JSON response from the Claude API with retry + backoff."""
         effective_model = model_override or self.config.model
+        if self.cost_tracker is not None:
+            self.cost_tracker.check_budget(pass_name)
         composed_prompt = self._compose_prompt(pass_name=pass_name, prompt_text=prompt_text, payload=payload, schema=schema)
         static_part = ""
         dynamic_part = ""
@@ -107,14 +154,22 @@ class ClaudeAPIBackend(LocalLLMBackend):
             LOGGER.info("Claude API call timing: pass=%s model=%s duration_seconds=%.2f", pass_name, effective_model, call_elapsed)
             usage = getattr(response, "usage", None)
             if usage is not None:
-                cache_creation_tokens = getattr(usage, "cache_creation_input_tokens", None)
-                cache_read_tokens = getattr(usage, "cache_read_input_tokens", None)
+                cache_creation_tokens = getattr(usage, "cache_creation_input_tokens", None) or 0
+                cache_read_tokens = getattr(usage, "cache_read_input_tokens", None) or 0
                 LOGGER.debug(
                     "Claude prompt cache usage: pass=%s cache_creation_input_tokens=%s cache_read_input_tokens=%s",
                     pass_name,
                     cache_creation_tokens,
                     cache_read_tokens,
                 )
+                if self.cost_tracker is not None:
+                    self.cost_tracker.record(
+                        model=effective_model,
+                        input_tokens=getattr(usage, "input_tokens", 0),
+                        output_tokens=getattr(usage, "output_tokens", 0),
+                        cache_creation_tokens=cache_creation_tokens,
+                        cache_read_tokens=cache_read_tokens,
+                    )
             text_blocks: list[str] = []
             for block in response.content:
                 block_type = getattr(block, "type", None)

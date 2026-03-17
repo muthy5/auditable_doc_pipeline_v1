@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from .claude_backend import ClaudeAPIBackend, ClaudeBackendConfig
+from .claude_backend import ClaudeAPIBackend, ClaudeBackendConfig, CostTracker
 from .chunker import chunk_document
 from .config import PipelineConfig, RepoPaths
 from .exceptions import PipelineError
@@ -91,7 +91,8 @@ class AuditablePipeline:
                 enable_prompt_caching=self.config.enable_prompt_caching,
             )
             token_tracker = TokenWindowTracker(self.config.claude_tokens_per_minute)
-            self.backend = ClaudeAPIBackend(config=claude_config, token_tracker=token_tracker)
+            cost_tracker = CostTracker(budget=self.config.budget_usd)
+            self.backend = ClaudeAPIBackend(config=claude_config, token_tracker=token_tracker, cost_tracker=cost_tracker)
         elif backend_name == "openai":
             openai_config = OpenAIBackendConfig(
                 api_key=self.config.openai_api_key,
@@ -549,15 +550,6 @@ class AuditablePipeline:
 
             chunk_summaries = [{"chunk_id": item["chunk_id"], "section_role": item["section_role"]} for item in ordered_chunk_extractions]
 
-            # Passes that benefit from stronger reasoning use the main model;
-            # extraction and audit passes use the cheaper fast model (Haiku).
-            _CHEAP_PASSES = {
-                "03_schema_audit",
-                "04_dependency_audit",
-                "05_assumption_audit",
-                "06_evidence_audit",
-            }
-
             def run_or_load(pass_name: str, prompt: str, schema: str, payload: dict[str, Any]) -> dict[str, Any]:
                 output_path = passes_dir / f"{pass_name}.json"
                 if resume and output_path.exists():
@@ -574,9 +566,8 @@ class AuditablePipeline:
                 }:
                     estimated_tokens = estimate_payload_tokens(payload)
                     LOGGER.debug("Pass %s estimated input tokens: %d", pass_name, estimated_tokens)
-                model_override = self._fast_model if pass_name in _CHEAP_PASSES else None
                 LOGGER.info("Starting pass %s", pass_name)
-                return self.pass_runner.run_model_pass(pass_name, prompt, schema, payload, output_path, strict, model_override=model_override)
+                return self.pass_runner.run_model_pass(pass_name, prompt, schema, payload, output_path, strict, model_override=self._fast_model)
 
             schema_audit_payload = {
                 "task": normalize,
@@ -710,6 +701,7 @@ class AuditablePipeline:
                     "unsupported_claim_count": len([e for e in validation.get("errors", []) if e.get("code") == "E_SYNTH_UNSUPPORTED_CLAIM"]),
                     "schema_validation_failure_list": self.pass_runner.validation_failures,
                     "document_type": selected_document_type,
+                    "estimated_cost_usd": getattr(getattr(self.backend, "cost_tracker", None), "total_cost", None),
                 },
             )
 
