@@ -1,101 +1,51 @@
-# Investigation: API Issues and Alternatives
+# Investigation: Why the Pipeline "Is Not Working"
 
-## Problem
+This repository now includes preflight diagnostics that catch most setup/runtime
+issues before execution. When the pipeline appears "not working," it is usually
+one (or more) of the checks below.
 
-The Claude API backend may fail for several reasons. This document investigates
-root causes and documents available alternatives.
+## 1) Backend not configured correctly
 
-## Root Causes for Claude API Failures
+### Claude backend
+- Missing `anthropic` package.
+- Missing `ANTHROPIC_API_KEY` (or `--claude-api-key`).
+- Model unavailable for your account/region.
 
-### 1. Missing API Key (most common)
+### OpenAI-compatible backend
+- Missing OpenAI API key (`OPENAI_API_KEY` or `--openai-api-key`).
+- Endpoint/model mismatch (provider does not serve the requested model).
 
-The `ClaudeAPIBackend` requires an Anthropic API key via:
-- `--claude-api-key` CLI argument, or
-- `ANTHROPIC_API_KEY` environment variable
+### Ollama backend
+- Ollama server is not reachable at `--ollama-base-url`.
+- Requested `--ollama-model` is not installed locally.
 
-Without it, the backend raises `ValueError` at initialization
-(`src/claude_backend.py:37-40`).
+## 2) Optional features enabled without required credentials
 
-**Fix:** Set the environment variable before running:
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-```
+- `--enable-search` set without `BRAVE_API_KEY` (or `--brave-api-key`).
 
-### 2. Missing `anthropic` Python Package
+## 3) Input format/parsing problems
 
-The package `anthropic>=0.39.0` is listed in `requirements.txt` but marked as
-optional. If not installed, `ClaudeAPIBackend.__init__` raises `BackendError`.
+- PDF input without `pypdf` installed.
+- DOCX input without `python-docx` installed.
+- Image-only/scanned PDFs (OCR not included by default).
+- Empty or unreadable input files.
 
-**Fix:**
-```bash
-pip install anthropic>=0.39.0
-```
+## 4) Environment/runtime constraints
 
-### 3. API Rate Limits or Network Errors
+- No network access for cloud APIs (Claude/OpenAI/Brave).
+- API rate limiting or transient provider errors.
+- Local runtime memory/timeout limits for large docs or local models.
 
-The backend retries up to 3 attempts (1 initial + 2 retries) for transient
-errors like JSON parse failures or API errors (`src/claude_backend.py:68-127`).
-However, it does **not** implement exponential backoff between retries for API
-rate limit errors (HTTP 429) — it only retries on response parsing failures.
+## 5) Strict-mode behavior looks like "failure"
 
-### 4. Model Availability
+With `--strict`, any schema-validation failure stops execution immediately. In
+non-strict mode, the run can continue with fallback artifacts, which may look
+partial but is expected behavior.
 
-The default model is `claude-sonnet-4-20250514` (`src/claude_backend.py:21`).
-If this model is deprecated or unavailable on your API plan, calls will fail.
+## 6) Quick recovery checklist
 
-## Existing Alternatives (Built In)
-
-The pipeline supports three backends via `--backend {demo|ollama|claude}`:
-
-| Backend  | API Key Required | Internet Required | Notes                          |
-|----------|-----------------|-------------------|--------------------------------|
-| `demo`   | No              | No                | Rule-based heuristics; no LLM  |
-| `ollama` | No              | No                | Local LLM server required       |
-| `claude` | Yes             | Yes               | Best quality; requires API key  |
-
-### Using Ollama (Recommended Local Alternative)
-
-1. Install Ollama: https://ollama.com
-2. Pull a model: `ollama pull llama3.1` or `ollama pull mistral`
-3. Run the pipeline:
-   ```bash
-   python -m src --backend ollama --ollama-model llama3.1 --input doc.txt
-   ```
-
-### Using Demo Backend (No Setup Required)
-
-```bash
-python -m src --backend demo --input doc.txt
-```
-
-This uses rule-based heuristics and requires no external dependencies, but
-produces lower-quality analysis results.
-
-## Potential New API Alternatives
-
-### OpenAI-Compatible Backend
-
-Many providers expose OpenAI-compatible APIs. Adding an OpenAI backend would
-unlock:
-
-- **OpenAI GPT-4o** — Comparable quality to Claude
-- **Azure OpenAI** — Enterprise-grade, same API shape
-- **OpenRouter** — Single API key for 100+ models (Claude, GPT-4, Gemini, Llama, etc.)
-- **Local servers** — vLLM, llama.cpp, LM Studio all expose OpenAI-compatible endpoints
-
-Implementation would follow the same `LocalLLMBackend` interface pattern already
-used by `ClaudeAPIBackend` and `OllamaLocalBackend`.
-
-### Google Gemini
-
-The `google-generativeai` package provides access to Gemini models. Competitive
-with Claude for structured JSON generation tasks.
-
-## Recommendation
-
-1. **Short-term:** Use `ollama` backend with a capable local model (llama3.1,
-   mistral, or codellama) for zero-cost, no-API-key operation.
-2. **Medium-term:** Add an OpenAI-compatible backend to support the broadest
-   range of providers with a single implementation.
-3. **Long-term:** Consider OpenRouter integration for maximum model flexibility
-   behind a single API key.
+1. Run tests (`pytest -q`) to confirm local code health.
+2. Use `--backend demo` first to verify core pipeline wiring.
+3. If using Claude/OpenAI, verify package + API key + model name.
+4. If using Ollama, confirm server reachability and model installation.
+5. If enabling search, set `BRAVE_API_KEY`.
