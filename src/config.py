@@ -21,6 +21,7 @@ class PipelineConfig:
     claude_model: str = "claude-sonnet-4-20250514"
     claude_tokens_per_minute: int = 25000
     claude_max_retries: int = 4
+    enable_prompt_caching: bool = True
     openai_api_key: str = ""
     openai_model: str = "gpt-4o"
     openai_base_url: str = "https://api.openai.com/v1"

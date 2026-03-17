@@ -77,6 +77,7 @@ class AuditablePipeline:
                 api_key=self.config.claude_api_key,
                 model=self.config.claude_model,
                 max_retries=self.config.claude_max_retries,
+                enable_prompt_caching=self.config.enable_prompt_caching,
             )
             token_tracker = TokenWindowTracker(self.config.claude_tokens_per_minute)
             self.backend = ClaudeAPIBackend(config=claude_config, token_tracker=token_tracker)
@@ -223,7 +224,11 @@ class AuditablePipeline:
 
     def _default_parallel_chunks(self) -> int:
         """Return backend-aware default for chunk parallelism."""
-        return 4 if self.backend_name in ("claude", "openai") else 1
+        return 4 if self._is_api_backend() else 1
+
+    def _is_api_backend(self) -> bool:
+        """Return True for hosted API backends suitable for extra concurrency."""
+        return self.backend_name in {"claude", "openai"}
 
     def _trim_if_claude(self, fn: Callable[[dict[str, Any]], dict[str, Any]], payload: dict[str, Any]) -> dict[str, Any]:
         """Apply payload trimming only for Claude backend."""
@@ -509,8 +514,63 @@ class AuditablePipeline:
                 LOGGER.info("Starting pass %s", pass_name)
                 return self.pass_runner.run_model_pass(pass_name, prompt, schema, payload, output_path, strict)
 
-            schema_audit = run_or_load("03_schema_audit", "03_schema_audit.txt", "03_schema_audit.schema.json", {"task": normalize, "merge": merge, "chunk_summaries": chunk_summaries, "document_type": selected_document_type, "document_type_schema": document_type_schema, "web_context": web_context, "reference_context": reference_context})
-            dependency_audit = run_or_load("04_dependency_audit", "04_dependency_audit.txt", "04_dependency_audit.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "web_context": web_context, "reference_context": reference_context})
+            if self._is_api_backend():
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    f03 = executor.submit(
+                        run_or_load,
+                        "03_schema_audit",
+                        "03_schema_audit.txt",
+                        "03_schema_audit.schema.json",
+                        {
+                            "task": normalize,
+                            "merge": merge,
+                            "chunk_summaries": chunk_summaries,
+                            "document_type": selected_document_type,
+                            "document_type_schema": document_type_schema,
+                            "web_context": web_context,
+                            "reference_context": reference_context,
+                        },
+                    )
+                    f04 = executor.submit(
+                        run_or_load,
+                        "04_dependency_audit",
+                        "04_dependency_audit.txt",
+                        "04_dependency_audit.schema.json",
+                        {
+                            "task": normalize,
+                            "merge": merge,
+                            "web_context": web_context,
+                            "reference_context": reference_context,
+                        },
+                    )
+                    schema_audit = f03.result()
+                    dependency_audit = f04.result()
+            else:
+                schema_audit = run_or_load(
+                    "03_schema_audit",
+                    "03_schema_audit.txt",
+                    "03_schema_audit.schema.json",
+                    {
+                        "task": normalize,
+                        "merge": merge,
+                        "chunk_summaries": chunk_summaries,
+                        "document_type": selected_document_type,
+                        "document_type_schema": document_type_schema,
+                        "web_context": web_context,
+                        "reference_context": reference_context,
+                    },
+                )
+                dependency_audit = run_or_load(
+                    "04_dependency_audit",
+                    "04_dependency_audit.txt",
+                    "04_dependency_audit.schema.json",
+                    {
+                        "task": normalize,
+                        "merge": merge,
+                        "web_context": web_context,
+                        "reference_context": reference_context,
+                    },
+                )
             if fast:
                 LOGGER.info("Fast mode enabled: skipping passes 05_assumption_audit and 06_evidence_audit")
                 assumption_audit = {"implicit_assumptions_found": [], "uncertainty_points": [], "blocking_assumptions": []}
