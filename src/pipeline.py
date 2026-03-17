@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -364,10 +365,26 @@ class AuditablePipeline:
             return payload
         return fn(payload)
 
+    def _build_self_doc_input(self, runs_dir: Path) -> Path:
+        """Concatenate all src/*.py files into a temp file for self-documentation."""
+        src_dir = self.repo_paths.root / "src"
+        py_files = sorted(
+            f for f in src_dir.iterdir()
+            if f.suffix == ".py" and f.name != "__pycache__" and not f.name.endswith(".pyc")
+        )
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        output_path = runs_dir / "_self_doc_input.txt"
+        parts: list[str] = []
+        for py_file in py_files:
+            parts.append(f"# === FILE: src/{py_file.name} ===")
+            parts.append(py_file.read_text(encoding="utf-8"))
+        output_path.write_text("\n".join(parts), encoding="utf-8")
+        return output_path
+
     def run(
         self,
-        input_path: Path,
-        runs_dir: Path,
+        input_path: Path | None = None,
+        runs_dir: Path = Path("runs"),
         doc_id: str = "doc_001",
         title: str | None = None,
         user_goal: str = "Identify missing information and organize the document into an actionable structure.",
@@ -382,6 +399,26 @@ class AuditablePipeline:
         **kwargs: Any,
     ) -> Path:
         """Execute the full pipeline and return the run directory."""
+        # --- Self-documenting mode ---
+        if input_path is None and requested_deliverable == "plan":
+            LOGGER.info("No input document provided — using source code as input")
+            input_path = self._build_self_doc_input(runs_dir)
+            if document_type == "auto":
+                document_type = "technical_spec"
+            user_goal = (
+                "Produce complete technical documentation including architecture, "
+                "data flow, component dependencies, and operational requirements. "
+                "Flag anything inferred vs explicitly stated in code."
+            )
+        elif input_path is None:
+            raise PipelineError("input_path is required when requested_deliverable is not 'plan'")
+
+        # --- API key check ---
+        if self.backend_name == "claude" and not os.environ.get("ANTHROPIC_API_KEY", ""):
+            api_key_from_config = getattr(getattr(self.backend, "config", None), "api_key", "")
+            if not api_key_from_config:
+                raise PipelineError("ANTHROPIC_API_KEY environment variable is not set")
+
         if "fast_mode" in kwargs:
             fast_mode_value = kwargs.pop("fast_mode")
             # Reject non-bool types: bool("false") is truthy and would silently skip audit passes 05 and 06.

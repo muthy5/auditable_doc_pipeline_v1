@@ -70,7 +70,8 @@ def _ensure_preflight_or_exit(args: argparse.Namespace, parser: argparse.Argumen
 def build_parser() -> argparse.ArgumentParser:
     """Build CLI argument parser."""
     parser = argparse.ArgumentParser(description="Run the auditable document pipeline.")
-    parser.add_argument("--input", required=True, help="Path to the input text document.")
+    parser.add_argument("--input", required=False, default=None, help="Path to the input text document.")
+    parser.add_argument("--deliverable", default="structured_gap_analysis_and_plan", help="Requested deliverable type (e.g. 'plan').")
     parser.add_argument("--runs-dir", default="runs", help="Directory where run artifacts will be written.")
     parser.add_argument("--run-dir", default="", help="Existing run directory (used with --resume).")
     parser.add_argument("--backend", default="demo", choices=["demo", "ollama", "claude", "openai"], help="Backend to use.")
@@ -151,13 +152,14 @@ def main() -> None:
 
     explicit_run_dir = Path(args.run_dir) if args.run_dir else None
     run_dir = pipeline.run(
-        input_path=Path(args.input),
+        input_path=Path(args.input) if args.input else None,
         runs_dir=Path(args.runs_dir),
         run_dir=explicit_run_dir,
         resume=args.resume,
         doc_id=args.doc_id,
         title=args.title,
         user_goal=args.goal,
+        requested_deliverable=args.deliverable,
         strict=args.strict,
         document_type=args.document_type,
         parallel_chunks=args.parallel_chunks,
