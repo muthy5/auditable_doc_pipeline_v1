@@ -22,6 +22,7 @@ from .merge_engine import merge_chunk_extractions
 from .ollama_backend import OllamaBackendConfig, OllamaLocalBackend
 from .pass_runner import PassRunner
 from .report import write_run_report
+from .run_exporter import export_run
 from .run_advisor import generate_run_advice
 from .text_extractor import extract_text_from_path
 from .retriever import LocalFileRetriever
@@ -629,6 +630,14 @@ class AuditablePipeline:
                     "document_type": selected_document_type,
                 },
             )
+
+            exports_dir = self.repo_paths.root / "exports"
+            if exports_dir.exists() and exports_dir.is_dir():
+                try:
+                    export_path = export_run(run_dir=run_dir, export_dir=exports_dir)
+                    LOGGER.info("Run artifacts exported to exports/%s", export_path.name)
+                except Exception as error:  # noqa: BLE001 - export failures must never block pipeline completion
+                    LOGGER.warning("Run artifact export failed: %s", error)
             return run_dir
         finally:
             root_logger.removeHandler(file_handler)

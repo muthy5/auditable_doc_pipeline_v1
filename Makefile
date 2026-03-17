@@ -1,4 +1,4 @@
-.PHONY: setup test run-demo run-ollama clean lint
+.PHONY: setup test run-demo run-ollama clean lint export-runs
 
 setup:
 	python -m venv .venv
@@ -19,3 +19,6 @@ clean:
 
 lint:
 	ruff check src/ tests/
+
+export-runs:
+	python -m src.run_exporter --runs-dir runs/ --export-dir exports/
