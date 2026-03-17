@@ -22,6 +22,7 @@ from .merge_engine import merge_chunk_extractions
 from .ollama_backend import OllamaBackendConfig, OllamaLocalBackend
 from .pass_runner import PassRunner
 from .report import write_run_report
+from .run_advisor import generate_run_advice
 from .text_extractor import extract_text_from_path
 from .retriever import LocalFileRetriever
 from .schemas import load_schema
@@ -264,6 +265,21 @@ class AuditablePipeline:
         file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
         root_logger = logging.getLogger()
         root_logger.addHandler(file_handler)
+
+        historical_run_dirs = [path for path in runs_dir.iterdir() if path.is_dir()] if runs_dir.exists() else []
+        if len(historical_run_dirs) >= 2:
+            try:
+                advisor_report = generate_run_advice(runs_dir)
+                for recommendation in advisor_report.speed_recommendations:
+                    LOGGER.info("Run advisor (speed): %s", recommendation)
+                for recommendation in advisor_report.accuracy_recommendations:
+                    LOGGER.info("Run advisor (accuracy): %s", recommendation)
+                if advisor_report.suggested_config:
+                    LOGGER.info("Run advisor suggested_config: %s", advisor_report.suggested_config)
+                for warning in advisor_report.warnings:
+                    LOGGER.info("Run advisor warning: %s", warning)
+            except Exception as error:  # pragma: no cover - defensive runtime safeguard
+                LOGGER.warning("Run advisor failed: %s", error)
 
         try:
             extraction_result = extract_text_from_path(input_path)
