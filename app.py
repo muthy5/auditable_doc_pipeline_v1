@@ -4,9 +4,10 @@ import importlib
 import json
 import os
 import inspect
-import tempfile
-import threading
+import subprocess
+import sys
 import time
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,6 @@ import src.config
 importlib.reload(src.config)  # ensure Streamlit hot-reload picks up config changes
 from src.config import PipelineConfig
 from src.document_classifier import SUPPORTED_DOCUMENT_TYPES
-from src.pipeline import AuditablePipeline
 from src.preflight import CapabilityStatus, run_preflight
 from src.text_extractor import TextExtractionResult, extract_text_from_path
 
@@ -343,94 +343,159 @@ def _persistent_runs_dir() -> Path:
     return runs_dir
 
 
-def _run_pipeline(pipeline: AuditablePipeline, input_path: Path, temp_root: Path, user_goal: str, strict_mode: bool, document_type_choice: str, fast_mode: bool = False, parallel_chunks: int | None = None) -> tuple[Path | None, Exception | None]:
-    result: dict[str, Path | Exception | None] = {"run_dir": None, "error": None}
-    chunk_progress: dict[str, int] = {"current": 0, "total": 0}
-    persistent_runs = _persistent_runs_dir()
+def _read_bg_status(runs_dir: Path) -> dict[str, Any] | None:
+    """Read the background status file, returning None if missing/corrupt."""
+    status_path = runs_dir / "bg_status.json"
+    if not status_path.exists():
+        return None
+    try:
+        return json.loads(status_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
 
-    def _execute_pipeline() -> None:
-        try:
-            run_dir = pipeline.run(
-                input_path=input_path,
-                runs_dir=persistent_runs,
-                user_goal=user_goal,
-                strict=strict_mode,
-                document_type=document_type_choice,
-                fast=fast_mode,
-                parallel_chunks=parallel_chunks,
-                progress_callback=lambda current, total: chunk_progress.update({"current": current, "total": total}),
-            )
-            result["run_dir"] = run_dir
-        except Exception as exc:  # noqa: BLE001 - surfaced to Streamlit users
-            result["error"] = exc
 
-    thread = threading.Thread(target=_execute_pipeline, daemon=True)
-    thread.start()
+def _poll_filesystem_progress(runs_dir: Path) -> tuple[int, str, float]:
+    """Poll the runs directory for pass completion. Returns (completed, current_pass, overall_progress)."""
+    pass_completion = {name: False for name in PASS_SEQUENCE}
 
+    run_dirs = sorted(runs_dir.glob("*/passes")) if runs_dir.exists() else []
+    chunk_files = 0
+    chunk_estimated_total = 0
+
+    if run_dirs:
+        active_passes_dir = run_dirs[-1]
+        for pass_name in PASS_SEQUENCE:
+            if pass_name == "01_extract_chunk":
+                pass_completion[pass_name] = (active_passes_dir / "01_extract_chunk").exists() and any(
+                    (active_passes_dir / "01_extract_chunk").glob("*.json")
+                )
+            else:
+                pass_completion[pass_name] = (active_passes_dir / f"{pass_name}.json").exists()
+
+        chunks_path = run_dirs[-1].parent / "input" / "chunks.json"
+        if chunks_path.exists():
+            try:
+                chunk_estimated_total = len(json.loads(chunks_path.read_text(encoding="utf-8")))
+            except json.JSONDecodeError:
+                chunk_estimated_total = 0
+        extract_dir = run_dirs[-1] / "01_extract_chunk"
+        if extract_dir.exists():
+            chunk_files = len(list(extract_dir.glob("*.json")))
+
+    completed = sum(1 for done in pass_completion.values() if done)
+    current = PASS_SEQUENCE[min(completed, len(PASS_SEQUENCE) - 1)]
+    current_pass_index = PASS_SEQUENCE.index("01_extract_chunk") if "01_extract_chunk" in PASS_SEQUENCE else 0
+    overall_progress = completed / len(PASS_SEQUENCE)
+
+    if chunk_estimated_total > 0 and chunk_files < chunk_estimated_total:
+        overall_progress = max(
+            overall_progress,
+            (current_pass_index + (chunk_files / max(chunk_estimated_total, 1))) / len(PASS_SEQUENCE),
+        )
+        current = f"{current}... chunk {chunk_files}/{chunk_estimated_total}"
+
+    return completed, current, overall_progress
+
+
+def _launch_background_pipeline(
+    config: PipelineConfig,
+    backend_name: str,
+    input_path: Path,
+    runs_dir: Path,
+    user_goal: str,
+    strict: bool,
+    document_type: str,
+    fast: bool,
+    parallel_chunks: int | None,
+) -> None:
+    """Launch the pipeline as a detached subprocess that survives page navigation."""
+    job = {
+        "config": asdict(config),
+        "repo_root": str(Path(__file__).parent),
+        "backend_name": backend_name,
+        "input_path": str(input_path),
+        "runs_dir": str(runs_dir),
+        "user_goal": user_goal,
+        "strict": strict,
+        "document_type": document_type,
+        "fast": fast,
+        "parallel_chunks": parallel_chunks,
+    }
+    job_path = runs_dir / "bg_job.json"
+    job_path.write_text(json.dumps(job), encoding="utf-8")
+
+    runner_script = Path(__file__).parent / "background_runner.py"
+    subprocess.Popen(
+        [sys.executable, str(runner_script), str(job_path)],
+        start_new_session=True,
+        stdout=open(runs_dir / "bg_stdout.log", "w"),
+        stderr=open(runs_dir / "bg_stderr.log", "w"),
+    )
+
+
+def _wait_for_pipeline(runs_dir: Path) -> tuple[Path | None, Exception | None]:
+    """Poll bg_status.json and filesystem for progress until the pipeline finishes."""
     progress = st.progress(0, text="Starting pipeline...")
     status_placeholder = st.empty()
-    pass_completion = {name: False for name in PASS_SEQUENCE}
-    passes_dir = persistent_runs
 
-    while thread.is_alive():
-        run_dirs = sorted(passes_dir.glob("*/passes")) if passes_dir.exists() else []
-        if run_dirs:
-            active_passes_dir = run_dirs[-1]
-            for pass_name in PASS_SEQUENCE:
-                if pass_name == "01_extract_chunk":
-                    pass_completion[pass_name] = (active_passes_dir / "01_extract_chunk").exists() and any(
-                        (active_passes_dir / "01_extract_chunk").glob("*.json")
-                    )
-                else:
-                    pass_completion[pass_name] = (active_passes_dir / f"{pass_name}.json").exists()
+    while True:
+        bg_status = _read_bg_status(runs_dir)
 
-        completed = sum(1 for done in pass_completion.values() if done)
-        current = PASS_SEQUENCE[min(completed, len(PASS_SEQUENCE) - 1)]
-        current_pass_index = PASS_SEQUENCE.index("01_extract_chunk") if "01_extract_chunk" in PASS_SEQUENCE else 0
-        overall_progress = completed / len(PASS_SEQUENCE)
-        chunk_total = chunk_progress.get("total", 0)
-        chunk_current = chunk_progress.get("current", 0)
-        if chunk_total > 0:
-            overall_progress = max(overall_progress, (current_pass_index + (chunk_current / max(chunk_total, 1))) / len(PASS_SEQUENCE))
-            progress.progress(overall_progress, text=f"Running {current}... Processing chunk {chunk_current} of {chunk_total}")
-            status_placeholder.info(f"Completed {completed}/{len(PASS_SEQUENCE)} passes • Processing chunk {chunk_current} of {chunk_total}")
-        else:
-            # fallback to filesystem-based chunk progress when callback has not fired yet
-            chunk_files = 0
-            chunk_estimated_total = 0
-            if run_dirs:
-                chunks_path = run_dirs[-1].parent / "input" / "chunks.json"
-                if chunks_path.exists():
-                    try:
-                        chunk_estimated_total = len(json.loads(chunks_path.read_text(encoding="utf-8")))
-                    except json.JSONDecodeError:
-                        chunk_estimated_total = 0
-                extract_dir = run_dirs[-1] / "01_extract_chunk"
-                if extract_dir.exists():
-                    chunk_files = len(list(extract_dir.glob("*.json")))
-            if chunk_estimated_total > 0 and chunk_files < chunk_estimated_total:
-                overall_progress = max(overall_progress, (current_pass_index + (chunk_files / max(chunk_estimated_total, 1))) / len(PASS_SEQUENCE))
-                progress.progress(overall_progress, text=f"Running {current}... Processing chunk {chunk_files} of {chunk_estimated_total}")
-                status_placeholder.info(f"Completed {completed}/{len(PASS_SEQUENCE)} passes • Processing chunk {chunk_files} of {chunk_estimated_total}")
-            else:
-                progress.progress(overall_progress, text=f"Running {current}...")
-                status_placeholder.info(f"Completed {completed}/{len(PASS_SEQUENCE)} passes")
-        time.sleep(0.25)
+        if bg_status and bg_status.get("state") == "completed":
+            run_dir_str = bg_status.get("run_dir")
+            if run_dir_str:
+                progress.progress(1.0, text="Pipeline complete")
+                status_placeholder.success("Pipeline completed successfully")
+                return Path(run_dir_str), None
+            st.error("Pipeline completed but did not produce a run directory.")
+            return None, Exception("missing run_dir")
 
-    thread.join()
+        if bg_status and bg_status.get("state") == "failed":
+            error_msg = bg_status.get("error", "Unknown error")
+            st.error(f"Pipeline failed: {error_msg}")
+            return None, Exception(error_msg)
 
-    if result["error"] is not None:
-        st.error(f"Pipeline failed: {result['error']}")
-        return None, result["error"] if isinstance(result["error"], Exception) else Exception("Unknown error")
+        completed, current, overall_progress = _poll_filesystem_progress(runs_dir)
+        progress.progress(overall_progress, text=f"Running {current}...")
+        status_placeholder.info(f"Completed {completed}/{len(PASS_SEQUENCE)} passes")
+        time.sleep(0.5)
 
-    run_dir = result["run_dir"]
-    if run_dir is None:
-        st.error("Pipeline did not produce a run directory.")
-        return None, Exception("missing run_dir")
 
-    progress.progress(1.0, text="Pipeline complete")
-    status_placeholder.success("Pipeline completed successfully")
-    return run_dir, None
+def _run_pipeline(config: PipelineConfig, backend_name: str, input_path: Path, runs_dir: Path, user_goal: str, strict_mode: bool, document_type_choice: str, fast_mode: bool = False, parallel_chunks: int | None = None) -> tuple[Path | None, Exception | None]:
+    _launch_background_pipeline(
+        config=config,
+        backend_name=backend_name,
+        input_path=input_path,
+        runs_dir=runs_dir,
+        user_goal=user_goal,
+        strict=strict_mode,
+        document_type=document_type_choice,
+        fast=fast_mode,
+        parallel_chunks=parallel_chunks,
+    )
+    return _wait_for_pipeline(runs_dir)
+
+
+def _render_previous_runs(runs_dir: Path) -> None:
+    """Show a list of completed runs that the user can view."""
+    if not runs_dir.exists():
+        return
+    completed_runs = sorted(
+        [d for d in runs_dir.iterdir() if d.is_dir() and (d / "final" / "final_answer.md").exists()],
+        key=lambda d: d.stat().st_mtime,
+        reverse=True,
+    )
+    if not completed_runs:
+        return
+
+    with st.expander(f"Previous runs ({len(completed_runs)})", expanded=False):
+        for run_path in completed_runs[:10]:
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.text(run_path.name)
+            with col2:
+                if st.button("View", key=f"view_{run_path.name}"):
+                    _render_results(run_path)
 
 
 def main() -> None:
@@ -509,6 +574,19 @@ def main() -> None:
         )
         _render_capability_status(preflight_statuses)
 
+    # --- Reconnect to in-progress or completed runs ---
+    persistent_runs = _persistent_runs_dir()
+    bg_status = _read_bg_status(persistent_runs)
+    if bg_status and bg_status.get("state") == "running":
+        st.info("A pipeline is running in the background. Reconnecting...")
+        run_dir, error = _wait_for_pipeline(persistent_runs)
+        if not error and run_dir is not None:
+            _render_results(run_dir)
+        return
+
+    # --- Show previous completed runs ---
+    _render_previous_runs(persistent_runs)
+
     st.markdown("### Plan request")
     plan_request = st.text_area("Ask for a plan (optional)", value="", height=100, help="If provided without an uploaded document, the app will generate a starter planning document from your request and run the full pipeline on it.")
 
@@ -536,49 +614,50 @@ def main() -> None:
         return
 
     try:
-        with tempfile.TemporaryDirectory(prefix="auditable_pipeline_") as temp_dir:
-            temp_root = Path(temp_dir)
-            if use_plan_request:
-                input_path = temp_root / "plan_request.txt"
-                input_path.write_text(build_plan_request_document(plan_request), encoding="utf-8")
-                st.info("Running pipeline from your plan request prompt.")
-            else:
-                input_path = temp_root / uploaded_file.name
-                input_path.write_bytes(uploaded_file.getvalue())
+        # Persist input files in the runs directory so they survive session disconnects
+        staging_dir = persistent_runs / "_staging"
+        staging_dir.mkdir(parents=True, exist_ok=True)
 
-            extraction_result = extract_text_from_path(input_path)
-            if not extraction_result.ok:
-                st.error(_format_extraction_error(extraction_result))
-                return
+        if use_plan_request:
+            input_path = staging_dir / "plan_request.txt"
+            input_path.write_text(build_plan_request_document(plan_request), encoding="utf-8")
+            st.info("Running pipeline from your plan request prompt.")
+        else:
+            input_path = staging_dir / uploaded_file.name
+            input_path.write_bytes(uploaded_file.getvalue())
 
-            resolved_reference_dir = reference_dir_input.strip()
-            if uploaded_references:
-                local_reference_dir = temp_root / "reference_docs"
-                local_reference_dir.mkdir(parents=True, exist_ok=True)
-                for uploaded_reference in uploaded_references:
-                    (local_reference_dir / uploaded_reference.name).write_bytes(uploaded_reference.getvalue())
-                if not resolved_reference_dir:
-                    resolved_reference_dir = str(local_reference_dir)
+        extraction_result = extract_text_from_path(input_path)
+        if not extraction_result.ok:
+            st.error(_format_extraction_error(extraction_result))
+            return
 
-            config = PipelineConfig(
-                claude_api_key=claude_api_key or default_claude_api_key,
-                claude_model=claude_model,
-                openai_api_key=openai_api_key or default_openai_api_key,
-                openai_model=openai_model,
-                openai_base_url=openai_base_url,
-                ollama_base_url=ollama_base_url,
-                ollama_model=ollama_model,
-                enable_search=enable_search,
-                enable_fallback_search=enable_fallback_search,
-                brave_api_key=brave_api_key,
-                reference_dir=resolved_reference_dir,
-            )
+        resolved_reference_dir = reference_dir_input.strip()
+        if uploaded_references:
+            local_reference_dir = staging_dir / "reference_docs"
+            local_reference_dir.mkdir(parents=True, exist_ok=True)
+            for uploaded_reference in uploaded_references:
+                (local_reference_dir / uploaded_reference.name).write_bytes(uploaded_reference.getvalue())
+            if not resolved_reference_dir:
+                resolved_reference_dir = str(local_reference_dir)
 
-            pipeline = AuditablePipeline(repo_root=Path(__file__).parent, backend_name=backend, config=config)
-            run_dir, error = _run_pipeline(pipeline, input_path, temp_root, user_goal, strict_mode, document_type_choice, fast_mode=fast_mode, parallel_chunks=int(parallel_chunks))
-            if error or run_dir is None:
-                return
-            _render_results(run_dir)
+        config = PipelineConfig(
+            claude_api_key=claude_api_key or default_claude_api_key,
+            claude_model=claude_model,
+            openai_api_key=openai_api_key or default_openai_api_key,
+            openai_model=openai_model,
+            openai_base_url=openai_base_url,
+            ollama_base_url=ollama_base_url,
+            ollama_model=ollama_model,
+            enable_search=enable_search,
+            enable_fallback_search=enable_fallback_search,
+            brave_api_key=brave_api_key,
+            reference_dir=resolved_reference_dir,
+        )
+
+        run_dir, error = _run_pipeline(config, backend, input_path, persistent_runs, user_goal, strict_mode, document_type_choice, fast_mode=fast_mode, parallel_chunks=int(parallel_chunks))
+        if error or run_dir is None:
+            return
+        _render_results(run_dir)
     except Exception as exc:  # noqa: BLE001 - catch top-level app exceptions
         st.error(f"Unexpected error: {exc}")
 
