@@ -219,3 +219,21 @@ def get_available_backends(cloud_mode: bool) -> list[str]:
     if cloud_mode:
         return ["demo", "claude", "openai"]
     return ["demo", "ollama", "claude", "openai"]
+
+
+def build_plan_request_document(plan_request: str) -> str:
+    """Build a lightweight procedural document from a natural-language plan request."""
+    request = plan_request.strip()
+    return "\n".join(
+        [
+            "Title: Requested Plan",
+            f"Goal: {request}",
+            "Materials:",
+            "- TBD resources to be identified during planning",
+            "Plan:",
+            "1. Clarify the desired outcome and constraints.",
+            "2. Gather required materials, tools, and dependencies.",
+            "3. Execute the work in a safe, ordered sequence.",
+            f"Expected output: Completed objective for '{request}'.",
+        ]
+    )

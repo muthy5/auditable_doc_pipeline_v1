@@ -18,6 +18,7 @@ from app_utils import (
     format_gap_plain_english,
     format_plan_for_display,
     get_available_backends,
+    build_plan_request_document,
     get_status_color,
     is_streamlit_cloud_environment,
     parse_final_sections,
@@ -458,14 +459,18 @@ def main() -> None:
         )
         _render_capability_status(preflight_statuses)
 
+    st.markdown("### Plan request")
+    plan_request = st.text_area("Ask for a plan (optional)", value="", height=100, help="If provided without an uploaded document, the app will generate a starter planning document from your request and run the full pipeline on it.")
+
     uploaded_file = st.file_uploader("Upload main document", type=["txt", "md", "pdf", "docx"])
-    run_clicked = st.button("Run Pipeline", type="primary", disabled=uploaded_file is None)
+    run_clicked = st.button("Run Pipeline", type="primary", disabled=(uploaded_file is None and not plan_request.strip()))
 
     if not run_clicked:
         return
 
-    if uploaded_file is None:
-        st.error("Please upload a main document (.txt, .md, .pdf, or .docx) before running the pipeline.")
+    use_plan_request = uploaded_file is None and bool(plan_request.strip())
+    if uploaded_file is None and not use_plan_request:
+        st.error("Please upload a main document or enter a plan request.")
         return
     if backend == "claude" and not preflight_statuses["claude_backend"].available:
         st.error(preflight_statuses["claude_backend"].message)
@@ -483,8 +488,14 @@ def main() -> None:
     try:
         with tempfile.TemporaryDirectory(prefix="auditable_pipeline_") as temp_dir:
             temp_root = Path(temp_dir)
-            input_path = temp_root / uploaded_file.name
-            input_path.write_bytes(uploaded_file.getvalue())
+            if use_plan_request:
+                input_path = temp_root / "plan_request.txt"
+                input_path.write_text(build_plan_request_document(plan_request), encoding="utf-8")
+                st.info("Running pipeline from your plan request prompt.")
+            else:
+                input_path = temp_root / uploaded_file.name
+                input_path.write_bytes(uploaded_file.getvalue())
+
             extraction_result = extract_text_from_path(input_path)
             if not extraction_result.ok:
                 st.error(_format_extraction_error(extraction_result))

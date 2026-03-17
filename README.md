@@ -185,7 +185,7 @@ Main document uploads accept `.txt`, `.md`, `.pdf`, and `.docx`. The app now rep
 streamlit run app.py
 ```
 
-The app supports demo and Claude in Streamlit Cloud deployments. Ollama remains available for local/self-hosted deployments only. The UI also supports strict mode toggling, optional web search, optional local reference documents, and renders run artifacts from the generated run directory.
+The app supports demo and Claude in Streamlit Cloud deployments. Ollama remains available for local/self-hosted deployments only. The UI also supports strict mode toggling, optional web search, optional local reference documents, and renders run artifacts from the generated run directory. You can also enter a free-form plan request without uploading a document; the app will synthesize a starter planning document and run the pipeline on it.
 
 
 ## Deploy to Streamlit Cloud
