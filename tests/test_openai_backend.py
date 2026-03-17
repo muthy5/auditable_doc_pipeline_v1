@@ -151,3 +151,34 @@ def test_config_from_env_with_overrides(monkeypatch: pytest.MonkeyPatch) -> None
     config = OpenAIBackendConfig.from_env(api_key="override-key", model="custom-model")
     assert config.api_key == "override-key"
     assert config.model == "custom-model"
+
+
+def test_generate_json_retries_on_rate_limit_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    calls = {"n": 0}
+
+    class FakeResponse:
+        def __init__(self, payload: bytes) -> None:
+            self._payload = payload
+
+        def read(self) -> bytes:
+            return self._payload
+
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+    def fake_urlopen(req: object, timeout: object = None) -> FakeResponse:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise urllib.error.HTTPError("http://x", 429, "Too Many Requests", hdrs=None, fp=None)
+        body = json.dumps({"choices": [{"message": {"content": '{"ok": true}'}}]}).encode("utf-8")
+        return FakeResponse(body)
+
+    monkeypatch.setattr("src.openai_backend.urllib.request.urlopen", fake_urlopen)
+    backend = OpenAICompatibleBackend(OpenAIBackendConfig(api_key="test-key", max_retries=1))
+    parsed = backend.generate_json(pass_name="p", prompt_text="x", payload={})
+    assert parsed == {"ok": True}
+    assert calls["n"] == 2

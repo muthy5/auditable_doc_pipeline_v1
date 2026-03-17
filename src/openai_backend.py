@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -13,6 +14,14 @@ from .llm_interface import LocalLLMBackend
 from .retry import RetryConfig, retry_with_backoff
 
 LOGGER = logging.getLogger(__name__)
+
+
+class OpenAIResponseError(BackendError):
+    """Transport/API error with optional HTTP status metadata."""
+
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 @dataclass(frozen=True)
@@ -73,9 +82,11 @@ class OpenAICompatibleBackend(LocalLLMBackend):
             return parsed
 
         def _should_retry(exc: Exception) -> bool:
-            if isinstance(exc, urllib.error.HTTPError):
-                return exc.code in {408, 429, 500, 502, 503, 504}
-            return isinstance(exc, (urllib.error.URLError, TimeoutError, json.JSONDecodeError, BackendError))
+            if isinstance(exc, OpenAIResponseError):
+                if exc.status_code is None:
+                    return True
+                return exc.status_code in {408, 409, 425, 429, 500, 502, 503, 504}
+            return isinstance(exc, (urllib.error.URLError, TimeoutError, socket.timeout, json.JSONDecodeError, BackendError))
 
         try:
             return retry_with_backoff(
@@ -123,9 +134,9 @@ class OpenAICompatibleBackend(LocalLLMBackend):
                 body = exc.read().decode("utf-8", errors="replace")[:500]
             except Exception:  # noqa: BLE001
                 pass
-            raise BackendError(f"OpenAI API HTTP {exc.code}: {exc.reason}. {body}") from exc
+            raise OpenAIResponseError(f"OpenAI API HTTP {exc.code}: {exc.reason}. {body}", status_code=exc.code) from exc
         except urllib.error.URLError as exc:
-            raise BackendError(f"Failed to connect to OpenAI-compatible API at {url}: {exc}") from exc
+            raise OpenAIResponseError(f"Failed to connect to OpenAI-compatible API at {url}: {exc}") from exc
 
         parsed = json.loads(raw)
         choices = parsed.get("choices", [])
