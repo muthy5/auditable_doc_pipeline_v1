@@ -168,6 +168,7 @@ def test_cli_preflight_rejects_invalid_claude(monkeypatch: pytest.MonkeyPatch) -
         ollama_base_url="http://127.0.0.1:11434",
         ollama_model="",
         ollama_timeout_s=1.0,
+        openai_api_key="",
     )
 
     class Parser:

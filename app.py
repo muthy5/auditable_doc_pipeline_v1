@@ -43,6 +43,9 @@ def _secret_or_env(name: str) -> str:
 
 
 
+
+
+
 def _format_extraction_error(result: TextExtractionResult) -> str:
     if result.error_code == "missing_pdf_parser":
         return "PDF parser package missing: install optional dependency 'pypdf'."
@@ -65,6 +68,7 @@ def _render_capability_status(statuses: dict[str, CapabilityStatus]) -> None:
         "demo_backend": "Demo backend",
         "claude_backend": "Claude backend",
         "ollama_backend": "Ollama backend",
+        "openai_backend": "OpenAI-compatible backend",
         "pdf_parsing": "PDF parsing",
         "docx_parsing": "DOCX parsing",
         "web_search": "Web search",
@@ -381,6 +385,7 @@ def _run_pipeline(pipeline: AuditablePipeline, input_path: Path, temp_root: Path
 def main() -> None:
     default_claude_api_key = _secret_or_env("ANTHROPIC_API_KEY")
     default_brave_api_key = _secret_or_env("BRAVE_API_KEY")
+    default_openai_api_key = _secret_or_env("OPENAI_API_KEY")
 
     cloud_mode = is_streamlit_cloud_environment()
     with st.sidebar:
@@ -396,6 +401,14 @@ def main() -> None:
             claude_api_key = st.text_input("Claude API Key", type="password", value=default_claude_api_key)
             claude_model = st.text_input("Claude model", value="claude-sonnet-4-20250514")
 
+        openai_api_key = ""
+        openai_model = "gpt-4o"
+        openai_base_url = "https://api.openai.com/v1"
+        if backend == "openai":
+            openai_api_key = st.text_input("OpenAI-compatible API Key", type="password", value=default_openai_api_key)
+            openai_model = st.text_input("OpenAI-compatible model", value="gpt-4o")
+            openai_base_url = st.text_input("API base URL", value="https://api.openai.com/v1")
+
         ollama_base_url = "http://127.0.0.1:11434"
         ollama_model = ""
         if backend == "ollama":
@@ -403,8 +416,8 @@ def main() -> None:
             ollama_model = st.text_input("Ollama model name", value="")
 
         strict_mode = st.toggle("Strict mode", value=False)
-        fast_mode = st.toggle("Fast mode", value=(backend == "claude"), help="Use larger chunks, process chunks in parallel, and skip passes 05/06.")
-        parallel_chunks = st.number_input("Parallel chunks", min_value=1, max_value=16, value=4 if backend == "claude" else 1, step=1)
+        fast_mode = st.toggle("Fast mode", value=(backend in ("claude", "openai")), help="Use larger chunks, process chunks in parallel, and skip passes 05/06.")
+        parallel_chunks = st.number_input("Parallel chunks", min_value=1, max_value=16, value=4 if backend in ("claude", "openai") else 1, step=1)
         enable_search = st.toggle("Web Search", value=False)
         brave_api_key = ""
         if enable_search:
@@ -431,6 +444,7 @@ def main() -> None:
             brave_api_key=brave_api_key or default_brave_api_key,
             ollama_base_url=ollama_base_url,
             ollama_model=ollama_model,
+            openai_api_key=openai_api_key or default_openai_api_key,
         )
         _render_capability_status(preflight_statuses)
 
@@ -448,6 +462,9 @@ def main() -> None:
         return
     if backend == "ollama" and not preflight_statuses["ollama_backend"].available:
         st.error(preflight_statuses["ollama_backend"].message)
+        return
+    if backend == "openai" and not preflight_statuses["openai_backend"].available:
+        st.error(preflight_statuses["openai_backend"].message)
         return
     if enable_search and not preflight_statuses["web_search"].available:
         st.error(preflight_statuses["web_search"].message)
@@ -475,6 +492,9 @@ def main() -> None:
             config = PipelineConfig(
                 claude_api_key=claude_api_key,
                 claude_model=claude_model,
+                openai_api_key=openai_api_key,
+                openai_model=openai_model,
+                openai_base_url=openai_base_url,
                 ollama_base_url=ollama_base_url,
                 ollama_model=ollama_model,
                 enable_search=enable_search,

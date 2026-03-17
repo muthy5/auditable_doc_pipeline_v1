@@ -47,12 +47,14 @@ def run_preflight(
     ollama_base_url: str,
     ollama_model: str,
     ollama_timeout_s: float = 5.0,
+    openai_api_key: str = "",
 ) -> dict[str, CapabilityStatus]:
     """Collect runtime dependency/backend checks for CLI and Streamlit."""
     statuses: dict[str, CapabilityStatus] = {
         "demo_backend": CapabilityStatus(True, "Demo backend is always available."),
         "claude_backend": CapabilityStatus(_has_module("anthropic"), "'anthropic' package available." if _has_module("anthropic") else "Install 'anthropic' to use Claude backend."),
         "ollama_backend": CapabilityStatus(True, "Ollama not selected."),
+        "openai_backend": CapabilityStatus(True, "OpenAI-compatible backend not selected."),
         "pdf_parsing": CapabilityStatus(_has_module("pypdf"), "'pypdf' package available." if _has_module("pypdf") else "Install 'pypdf' to parse PDF files."),
         "docx_parsing": CapabilityStatus(_has_module("docx"), "'python-docx' package available." if _has_module("docx") else "Install 'python-docx' to parse DOCX files."),
         "web_search": CapabilityStatus(True, "Web search disabled."),
@@ -68,6 +70,12 @@ def run_preflight(
 
     if backend == "ollama":
         statuses["ollama_backend"] = check_ollama(ollama_base_url, ollama_model, timeout_s=ollama_timeout_s)
+
+    if backend == "openai":
+        if not openai_api_key.strip():
+            statuses["openai_backend"] = CapabilityStatus(False, "OpenAI-compatible backend unavailable: missing API key.")
+        else:
+            statuses["openai_backend"] = CapabilityStatus(True, "OpenAI-compatible backend configured.")
 
     if enable_search:
         if brave_api_key.strip():
