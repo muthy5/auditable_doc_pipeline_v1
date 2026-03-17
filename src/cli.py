@@ -56,6 +56,7 @@ def _ensure_preflight_or_exit(args: argparse.Namespace, parser: argparse.Argumen
         ollama_model=args.ollama_model,
         ollama_timeout_s=args.ollama_timeout_s,
         openai_api_key=args.openai_api_key or os.environ.get("OPENAI_API_KEY", ""),
+        openai_base_url=args.openai_base_url,
     )
     if args.backend == "claude" and not statuses["claude_backend"].available:
         parser.error(statuses["claude_backend"].message)

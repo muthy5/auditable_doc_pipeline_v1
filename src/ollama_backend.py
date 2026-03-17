@@ -71,7 +71,9 @@ class OllamaLocalBackend(LocalLLMBackend):
         except Exception as exc:  # noqa: BLE001
             raise BackendError(f"Unable to reach Ollama server at {url}: {exc}") from exc
         models = [item.get("name", "") for item in payload.get("models", []) if isinstance(item, dict)]
-        if self.config.model not in models:
+        model = self.config.model
+        accepted_model_names = {model, f"{model}:latest"} if ":" not in model else {model, model.split(":", 1)[0]}
+        if not any(candidate in models for candidate in accepted_model_names):
             raise BackendError(f"Ollama model '{self.config.model}' not found. Available: {models}")
 
     def generate_json(

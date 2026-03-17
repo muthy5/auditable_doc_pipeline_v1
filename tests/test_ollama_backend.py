@@ -48,3 +48,21 @@ def test_generate_json_does_not_retry_on_permanent_4xx(monkeypatch: pytest.Monke
     with pytest.raises(BackendError):
         backend.generate_json(pass_name="p", prompt_text="t", payload={})
     assert calls["count"] == 1
+
+
+def test_health_check_accepts_latest_tag_for_unqualified_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    backend = OllamaLocalBackend(OllamaBackendConfig(model="llama3"))
+
+    class FakeResponse:
+        def read(self) -> bytes:
+            return json.dumps({"models": [{"name": "llama3:latest"}]}).encode("utf-8")
+
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+    monkeypatch.setattr("src.ollama_backend.urllib.request.urlopen", lambda *args, **kwargs: FakeResponse())
+
+    backend.health_check()

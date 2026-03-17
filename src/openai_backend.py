@@ -16,6 +16,11 @@ from .retry import RetryConfig, retry_with_backoff
 LOGGER = logging.getLogger(__name__)
 
 
+def _is_local_base_url(base_url: str) -> bool:
+    normalized = base_url.strip().lower()
+    return "localhost" in normalized or "127.0.0.1" in normalized
+
+
 class OpenAIResponseError(BackendError):
     """Transport/API error with optional HTTP status metadata."""
 
@@ -57,7 +62,7 @@ class OpenAICompatibleBackend(LocalLLMBackend):
     """Backend that calls any OpenAI-compatible chat completions API."""
 
     def __init__(self, config: OpenAIBackendConfig) -> None:
-        if not config.api_key:
+        if not config.api_key and not _is_local_base_url(config.base_url):
             raise ValueError(
                 "OpenAI-compatible API key must be provided via --openai-api-key "
                 "or OPENAI_API_KEY environment variable."
@@ -120,10 +125,9 @@ class OpenAICompatibleBackend(LocalLLMBackend):
             "temperature": self.config.temperature,
         }
         data = json.dumps(request_body).encode("utf-8")
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.config.api_key}",
-        }
+        headers = {"Content-Type": "application/json"}
+        if self.config.api_key:
+            headers["Authorization"] = f"Bearer {self.config.api_key}"
         req = urllib.request.Request(url=url, data=data, headers=headers, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=120) as response:

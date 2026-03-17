@@ -182,3 +182,9 @@ def test_generate_json_retries_on_rate_limit_then_succeeds(monkeypatch: pytest.M
     parsed = backend.generate_json(pass_name="p", prompt_text="x", payload={})
     assert parsed == {"ok": True}
     assert calls["n"] == 2
+
+
+def test_openai_backend_allows_missing_api_key_for_local_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    backend = OpenAICompatibleBackend(OpenAIBackendConfig(api_key="", base_url="http://localhost:8000/v1"))
+    assert backend.config.base_url == "http://localhost:8000/v1"

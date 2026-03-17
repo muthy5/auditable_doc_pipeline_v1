@@ -455,6 +455,7 @@ def main() -> None:
             ollama_base_url=ollama_base_url,
             ollama_model=ollama_model,
             openai_api_key=openai_api_key or default_openai_api_key,
+            openai_base_url=openai_base_url,
         )
         _render_capability_status(preflight_statuses)
 
