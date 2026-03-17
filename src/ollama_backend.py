@@ -82,6 +82,7 @@ class OllamaLocalBackend(LocalLLMBackend):
         prompt_text: str,
         payload: dict[str, Any],
         schema: dict[str, Any] | None = None,
+        model_override: str | None = None,
     ) -> dict[str, Any]:
         """Generate one JSON object for a pipeline pass."""
         composed_prompt = self._compose_prompt(pass_name, prompt_text, payload, schema)

@@ -120,10 +120,10 @@ def test_non_strict_schema_failure_writes_fallback_and_report_status(tmp_path: P
     pipeline = AuditablePipeline(repo_root=repo_root, backend_name="demo")
     original_generate = pipeline.pass_runner.backend.generate_json
 
-    def patched_generate_json(pass_name, prompt_text, payload, schema=None):
+    def patched_generate_json(pass_name, prompt_text, payload, schema=None, model_override=None):
         if pass_name == "04_dependency_audit":
             return {"invalid": "payload"}
-        return original_generate(pass_name, prompt_text, payload, schema)
+        return original_generate(pass_name, prompt_text, payload, schema, model_override=model_override)
 
     pipeline.pass_runner.backend.generate_json = patched_generate_json
     run_dir = pipeline.run(input_path=input_path, runs_dir=tmp_path / "runs", strict=False)
@@ -146,10 +146,10 @@ def test_resume_marks_fallback_pass_as_resumed(tmp_path: Path) -> None:
     pipeline = AuditablePipeline(repo_root=repo_root, backend_name="demo")
     original_generate = pipeline.pass_runner.backend.generate_json
 
-    def patched_generate_json(pass_name, prompt_text, payload, schema=None):
+    def patched_generate_json(pass_name, prompt_text, payload, schema=None, model_override=None):
         if pass_name == "03_schema_audit":
             return {"broken": True}
-        return original_generate(pass_name, prompt_text, payload, schema)
+        return original_generate(pass_name, prompt_text, payload, schema, model_override=model_override)
 
     pipeline.pass_runner.backend.generate_json = patched_generate_json
     first_run_dir = pipeline.run(input_path=input_path, runs_dir=tmp_path / "runs", strict=False)

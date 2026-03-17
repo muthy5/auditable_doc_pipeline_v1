@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -28,7 +29,16 @@ from .text_extractor import extract_text_from_path
 from .retriever import LocalFileRetriever
 from .schemas import load_schema
 from .validators import validate_chunks, validate_final_output
-from .token_budget import TokenWindowTracker, estimate_payload_tokens, trim_for_plan, trim_for_synthesis
+from .token_budget import (
+    TokenWindowTracker,
+    estimate_payload_tokens,
+    trim_for_assumption_audit,
+    trim_for_dependency_audit,
+    trim_for_evidence_audit,
+    trim_for_plan,
+    trim_for_schema_audit,
+    trim_for_synthesis,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -92,6 +102,7 @@ class AuditablePipeline:
         else:
             raise ValueError(f"Unsupported backend: {backend_name}")
         self.pass_runner = PassRunner(self.backend, self.repo_paths.prompts_dir, self.repo_paths.schemas_dir)
+        self._fast_model: str | None = self.config.claude_fast_model if backend_name == "claude" else None
 
     def _validate_required_files(self, repo_paths: RepoPaths) -> None:
         """Ensure all expected prompt and schema files exist."""
@@ -138,7 +149,7 @@ class AuditablePipeline:
         return [q for q in queries if isinstance(q, str) and q.strip()]
 
     def _build_web_context(self, normalize: dict[str, Any], document_text: str, strict: bool = False) -> list[dict[str, Any]]:
-        """Generate queries and execute Brave searches for each query."""
+        """Generate queries and execute Brave searches in parallel."""
         if not self.config.enable_search:
             return []
         if not self.config.brave_api_key:
@@ -149,8 +160,11 @@ class AuditablePipeline:
             client = BraveSearchClient(api_key=self.config.brave_api_key)
             queries = self._generate_search_queries(normalize, document_text)
             web_context: list[dict[str, Any]] = []
-            for query in queries:
-                web_context.append({"query": query, "results": client.search(query)})
+            with ThreadPoolExecutor(max_workers=min(len(queries), 5)) as executor:
+                futures = {executor.submit(client.search, query): query for query in queries}
+                for future in futures:
+                    query = futures[future]
+                    web_context.append({"query": query, "results": future.result()})
             return web_context
         except Exception as exc:  # noqa: BLE001 - strict mode controls whether search failures are fatal
             if strict:
@@ -225,7 +239,7 @@ class AuditablePipeline:
 
     def _default_parallel_chunks(self) -> int:
         """Return backend-aware default for chunk parallelism."""
-        return 4 if self._is_api_backend() else 1
+        return 8 if self._is_api_backend() else 1
 
     def _is_api_backend(self) -> bool:
         """Return True for hosted API backends suitable for extra concurrency."""
@@ -281,9 +295,12 @@ class AuditablePipeline:
         root_logger = logging.getLogger()
         root_logger.addHandler(file_handler)
 
-        historical_run_dirs = [path for path in runs_dir.iterdir() if path.is_dir()] if runs_dir.exists() else []
-        if len(historical_run_dirs) >= 2:
+        def _run_advisor_background() -> None:
+            """Run advisor analysis in background to avoid blocking pipeline start."""
             try:
+                historical_run_dirs = [path for path in runs_dir.iterdir() if path.is_dir()] if runs_dir.exists() else []
+                if len(historical_run_dirs) < 2:
+                    return
                 advisor_report = generate_run_advice(runs_dir)
                 for recommendation in advisor_report.speed_recommendations:
                     LOGGER.info("Run advisor (speed): %s", recommendation)
@@ -295,6 +312,9 @@ class AuditablePipeline:
                     LOGGER.info("Run advisor warning: %s", warning)
             except Exception as error:  # pragma: no cover - defensive runtime safeguard
                 LOGGER.warning("Run advisor failed: %s", error)
+
+        advisor_thread = threading.Thread(target=_run_advisor_background, daemon=True)
+        advisor_thread.start()
 
         try:
             extraction_result = extract_text_from_path(input_path)
@@ -375,21 +395,28 @@ class AuditablePipeline:
                 "user_constraints": ["Do not invent facts", "Surface uncertainty explicitly"],
             }
 
-            if resume and has_output("00_normalize_request"):
-                normalize = json.loads((passes_dir / "00_normalize_request.json").read_text())
-                self.pass_runner.mark_pass_status("00_normalize_request", _status_from_payload(normalize, resumed=True), **_metadata_from_payload(normalize))
-            else:
-                LOGGER.info("Starting pass 00_normalize_request")
-                normalize = self.pass_runner.run_model_pass("00_normalize_request", "00_normalize_request.txt", "00_normalize_request.schema.json", normalize_input, passes_dir / "00_normalize_request.json", strict)
-
             classification_output_path = passes_dir / "classify_document.json"
-            if document_type == "auto":
-                if resume and has_output("classify_document"):
-                    classification = json.loads(classification_output_path.read_text())
-                    selected_document_type = classification.get("selected_document_type", classification.get("document_type", DEFAULT_DOCUMENT_TYPE))
-                else:
-                    LOGGER.info("Starting pass classify_document")
-                    classification = classify_document_with_metadata(text, self.backend, repo_root=self.repo_paths.root)
+
+            # Run normalize and classify in parallel for API backends
+            need_normalize = not (resume and has_output("00_normalize_request"))
+            need_classify = document_type == "auto" and not (resume and has_output("classify_document"))
+
+            if need_normalize and need_classify and self._is_api_backend():
+                LOGGER.info("Starting passes 00_normalize_request and classify_document in parallel")
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    f_norm = executor.submit(
+                        self.pass_runner.run_model_pass,
+                        "00_normalize_request", "00_normalize_request.txt",
+                        "00_normalize_request.schema.json", normalize_input,
+                        passes_dir / "00_normalize_request.json", strict,
+                        self._fast_model,
+                    )
+                    f_classify = executor.submit(
+                        classify_document_with_metadata, text, self.backend,
+                        repo_root=self.repo_paths.root, model_override=self._fast_model,
+                    )
+                    normalize = f_norm.result()
+                    classification = f_classify.result()
                     self.pass_runner.validate_with_schema("classify_document.schema.json", {
                         "document_type": classification["document_type"],
                         "confidence": classification["confidence"],
@@ -398,6 +425,31 @@ class AuditablePipeline:
                     selected_document_type = str(classification.get("selected_document_type", DEFAULT_DOCUMENT_TYPE))
                     classification_output_path.write_text(json.dumps(classification, indent=2), encoding="utf-8")
             else:
+                if resume and has_output("00_normalize_request"):
+                    normalize = json.loads((passes_dir / "00_normalize_request.json").read_text())
+                    self.pass_runner.mark_pass_status("00_normalize_request", _status_from_payload(normalize, resumed=True), **_metadata_from_payload(normalize))
+                else:
+                    LOGGER.info("Starting pass 00_normalize_request")
+                    normalize = self.pass_runner.run_model_pass("00_normalize_request", "00_normalize_request.txt", "00_normalize_request.schema.json", normalize_input, passes_dir / "00_normalize_request.json", strict, model_override=self._fast_model)
+
+                if document_type == "auto":
+                    if resume and has_output("classify_document"):
+                        classification = json.loads(classification_output_path.read_text())
+                        selected_document_type = classification.get("selected_document_type", classification.get("document_type", DEFAULT_DOCUMENT_TYPE))
+                    else:
+                        LOGGER.info("Starting pass classify_document")
+                        classification = classify_document_with_metadata(text, self.backend, repo_root=self.repo_paths.root, model_override=self._fast_model)
+                        self.pass_runner.validate_with_schema("classify_document.schema.json", {
+                            "document_type": classification["document_type"],
+                            "confidence": classification["confidence"],
+                            "reason": classification["reason"],
+                        })
+                        selected_document_type = str(classification.get("selected_document_type", DEFAULT_DOCUMENT_TYPE))
+                        classification_output_path.write_text(json.dumps(classification, indent=2), encoding="utf-8")
+                else:
+                    pass  # handled below
+
+            if document_type != "auto":
                 if document_type not in SUPPORTED_DOCUMENT_TYPES:
                     raise PipelineError(f"Unsupported document type '{document_type}'. Supported: {sorted(SUPPORTED_DOCUMENT_TYPES)}")
                 selected_document_type = document_type
@@ -515,6 +567,24 @@ class AuditablePipeline:
                 LOGGER.info("Starting pass %s", pass_name)
                 return self.pass_runner.run_model_pass(pass_name, prompt, schema, payload, output_path, strict)
 
+            schema_audit_payload = {
+                "task": normalize,
+                "merge": merge,
+                "chunk_summaries": chunk_summaries,
+                "document_type": selected_document_type,
+                "document_type_schema": document_type_schema,
+                "web_context": web_context,
+                "reference_context": reference_context,
+            }
+            dependency_audit_payload = {
+                "task": normalize,
+                "merge": merge,
+                "web_context": web_context,
+                "reference_context": reference_context,
+            }
+            schema_audit_payload = self._trim_if_claude(trim_for_schema_audit, schema_audit_payload)
+            dependency_audit_payload = self._trim_if_claude(trim_for_dependency_audit, dependency_audit_payload)
+
             if self._is_api_backend():
                 with ThreadPoolExecutor(max_workers=2) as executor:
                     f03 = executor.submit(
@@ -522,27 +592,14 @@ class AuditablePipeline:
                         "03_schema_audit",
                         "03_schema_audit.txt",
                         "03_schema_audit.schema.json",
-                        {
-                            "task": normalize,
-                            "merge": merge,
-                            "chunk_summaries": chunk_summaries,
-                            "document_type": selected_document_type,
-                            "document_type_schema": document_type_schema,
-                            "web_context": web_context,
-                            "reference_context": reference_context,
-                        },
+                        schema_audit_payload,
                     )
                     f04 = executor.submit(
                         run_or_load,
                         "04_dependency_audit",
                         "04_dependency_audit.txt",
                         "04_dependency_audit.schema.json",
-                        {
-                            "task": normalize,
-                            "merge": merge,
-                            "web_context": web_context,
-                            "reference_context": reference_context,
-                        },
+                        dependency_audit_payload,
                     )
                     schema_audit = f03.result()
                     dependency_audit = f04.result()
@@ -551,26 +608,13 @@ class AuditablePipeline:
                     "03_schema_audit",
                     "03_schema_audit.txt",
                     "03_schema_audit.schema.json",
-                    {
-                        "task": normalize,
-                        "merge": merge,
-                        "chunk_summaries": chunk_summaries,
-                        "document_type": selected_document_type,
-                        "document_type_schema": document_type_schema,
-                        "web_context": web_context,
-                        "reference_context": reference_context,
-                    },
+                    schema_audit_payload,
                 )
                 dependency_audit = run_or_load(
                     "04_dependency_audit",
                     "04_dependency_audit.txt",
                     "04_dependency_audit.schema.json",
-                    {
-                        "task": normalize,
-                        "merge": merge,
-                        "web_context": web_context,
-                        "reference_context": reference_context,
-                    },
+                    dependency_audit_payload,
                 )
             if fast:
                 LOGGER.info("Fast mode enabled: skipping passes 05_assumption_audit and 06_evidence_audit")
@@ -579,8 +623,35 @@ class AuditablePipeline:
                 self.pass_runner.mark_pass_status("05_assumption_audit", "skipped", detail="Skipped in fast mode")
                 self.pass_runner.mark_pass_status("06_evidence_audit", "skipped", detail="Skipped in fast mode")
             else:
-                assumption_audit = run_or_load("05_assumption_audit", "05_assumption_audit.txt", "05_assumption_audit.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "web_context": web_context, "reference_context": reference_context})
-                evidence_audit = run_or_load("06_evidence_audit", "06_evidence_audit.txt", "06_evidence_audit.schema.json", {"merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "web_context": web_context, "reference_context": reference_context})
+                assumption_payload = self._trim_if_claude(
+                    trim_for_assumption_audit,
+                    {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "web_context": web_context, "reference_context": reference_context},
+                )
+                evidence_payload = self._trim_if_claude(
+                    trim_for_evidence_audit,
+                    {"merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "web_context": web_context, "reference_context": reference_context},
+                )
+                if self._is_api_backend():
+                    with ThreadPoolExecutor(max_workers=2) as executor:
+                        f05 = executor.submit(
+                            run_or_load,
+                            "05_assumption_audit",
+                            "05_assumption_audit.txt",
+                            "05_assumption_audit.schema.json",
+                            assumption_payload,
+                        )
+                        f06 = executor.submit(
+                            run_or_load,
+                            "06_evidence_audit",
+                            "06_evidence_audit.txt",
+                            "06_evidence_audit.schema.json",
+                            evidence_payload,
+                        )
+                        assumption_audit = f05.result()
+                        evidence_audit = f06.result()
+                else:
+                    assumption_audit = run_or_load("05_assumption_audit", "05_assumption_audit.txt", "05_assumption_audit.schema.json", assumption_payload)
+                    evidence_audit = run_or_load("06_evidence_audit", "06_evidence_audit.txt", "06_evidence_audit.schema.json", evidence_payload)
             synthesis_payload = self._trim_if_claude(
                 trim_for_synthesis,
                 {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "evidence_audit": evidence_audit, "web_context": web_context, "reference_context": reference_context},

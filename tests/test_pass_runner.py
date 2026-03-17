@@ -11,7 +11,7 @@ from src.schemas import load_schema
 
 
 class _InvalidOutputBackend(LocalLLMBackend):
-    def generate_json(self, pass_name, prompt_text, payload, schema=None):
+    def generate_json(self, pass_name, prompt_text, payload, schema=None, model_override=None):
         return {"title": 999, "extra": "ignored"}
 
 

@@ -65,8 +65,10 @@ class ClaudeAPIBackend(LocalLLMBackend):
         prompt_text: str,
         payload: Dict[str, Any],
         schema: Dict[str, Any] | None = None,
+        model_override: str | None = None,
     ) -> Dict[str, Any]:
         """Generate a JSON response from the Claude API with retry + backoff."""
+        effective_model = model_override or self.config.model
         composed_prompt = self._compose_prompt(pass_name=pass_name, prompt_text=prompt_text, payload=payload, schema=schema)
         static_part = ""
         dynamic_part = ""
@@ -82,7 +84,7 @@ class ClaudeAPIBackend(LocalLLMBackend):
             call_start = time.perf_counter()
             if self.config.enable_prompt_caching:
                 response = self._client.messages.create(
-                    model=self.config.model,
+                    model=effective_model,
                     max_tokens=self.config.max_tokens,
                     temperature=self.config.temperature,
                     system=[
@@ -96,13 +98,13 @@ class ClaudeAPIBackend(LocalLLMBackend):
                 )
             else:
                 response = self._client.messages.create(
-                    model=self.config.model,
+                    model=effective_model,
                     max_tokens=self.config.max_tokens,
                     temperature=self.config.temperature,
                     messages=[{"role": "user", "content": composed_prompt}],
                 )
             call_elapsed = time.perf_counter() - call_start
-            LOGGER.info("Claude API call timing: pass=%s duration_seconds=%.2f", pass_name, call_elapsed)
+            LOGGER.info("Claude API call timing: pass=%s model=%s duration_seconds=%.2f", pass_name, effective_model, call_elapsed)
             usage = getattr(response, "usage", None)
             if usage is not None:
                 cache_creation_tokens = getattr(usage, "cache_creation_input_tokens", None)
