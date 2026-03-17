@@ -169,6 +169,29 @@ def test_demo_lemonade_regression_still_reports_missing_juicing(tmp_path: Path) 
     assert any("juice" in item["item"].lower() for item in dependency["missing_prerequisites"])
 
 
+def test_demo_generic_procedural_dossier_stays_domain_neutral(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    input_path = repo_root / "examples" / "technical_procedural_dossier.txt"
+    pipeline = AuditablePipeline(repo_root=repo_root, backend_name="demo")
+
+    run_dir = pipeline.run(input_path=input_path, runs_dir=tmp_path / "runs", document_type="procedural_plan")
+
+    schema_audit = json.loads((run_dir / "passes" / "03_schema_audit.json").read_text(encoding="utf-8"))
+    synthesis = json.loads((run_dir / "passes" / "07_synthesize.json").read_text(encoding="utf-8"))
+    final_answer = (run_dir / "final" / "final_answer.md").read_text(encoding="utf-8").lower()
+
+    assert "ingredient_preparation" not in schema_audit["expected_sections"]
+    assert "inputs" in schema_audit["expected_sections"]
+
+    forbidden = ["lemonade", "lemon", "lemons", "sugar", "water", "ice", "juicing"]
+    for term in forbidden:
+        assert term not in final_answer
+
+    bottom_line = synthesis["final_answer"]["bottom_line"]
+    if "operationally complete" in bottom_line["text"].lower():
+        assert bottom_line["support"]
+
+
 def test_demo_non_lemonade_input_does_not_leak_sample_content(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     input_path = repo_root / "examples" / "non_procedural_dossier.txt"

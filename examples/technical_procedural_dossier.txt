@@ -1,0 +1,18 @@
+Title: Reactor startup checklist
+Objective: Bring Reactor Unit 3 online after maintenance.
+Inputs:
+- Coolant loop pressure readings
+- Control rod calibration report
+- Operator shift roster
+Process steps:
+1. Verify containment seal integrity and log baseline pressure.
+2. Run control-system self-test and confirm no fault codes.
+3. Ramp coolant pumps to nominal flow and monitor vibration.
+4. Raise reactor output in 5% increments while recording telemetry.
+Outputs:
+- Stable thermal output at target setpoint
+- Shift handoff log with anomaly notes
+Constraints:
+- Abort if vibration exceeds threshold.
+Validation criteria:
+- Output remains within tolerance for 30 minutes.
