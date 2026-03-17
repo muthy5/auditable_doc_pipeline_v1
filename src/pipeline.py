@@ -102,6 +102,7 @@ class AuditablePipeline:
         else:
             raise ValueError(f"Unsupported backend: {backend_name}")
         self.pass_runner = PassRunner(self.backend, self.repo_paths.prompts_dir, self.repo_paths.schemas_dir)
+        self._retriever: LocalFileRetriever | None = None
         self._fast_model: str | None = self.config.claude_fast_model if backend_name == "claude" else None
         # Passes that need full-capability model (Sonnet); all others use fast model (Haiku)
         self._sonnet_passes: frozenset[str] = frozenset({"07_synthesize", "09_generate_plan"})
@@ -205,17 +206,23 @@ class AuditablePipeline:
                 unique_queries.append(query)
         return unique_queries[:8]
 
+    def _get_retriever(self) -> LocalFileRetriever:
+        """Return a cached retriever instance, creating one on first use."""
+        if self._retriever is None:
+            self._retriever = LocalFileRetriever(
+                self.config.reference_dir,
+                chunk_target_min_words=self.config.chunk_target_min_words,
+                chunk_target_max_words=self.config.chunk_target_max_words,
+                chunk_hard_max_words=self.config.chunk_hard_max_words,
+                chunk_overlap_max_words=self.config.chunk_overlap_max_words,
+            )
+        return self._retriever
+
     def _build_reference_context(self, normalize: dict[str, Any], user_goal: str) -> list[dict[str, Any]]:
         """Retrieve local context chunks when a reference directory is configured."""
         if not self.config.reference_dir:
             return []
-        retriever = LocalFileRetriever(
-            self.config.reference_dir,
-            chunk_target_min_words=self.config.chunk_target_min_words,
-            chunk_target_max_words=self.config.chunk_target_max_words,
-            chunk_hard_max_words=self.config.chunk_hard_max_words,
-            chunk_overlap_max_words=self.config.chunk_overlap_max_words,
-        )
+        retriever = self._get_retriever()
         aggregated: list[dict[str, Any]] = []
         for query in self._generate_retrieval_queries(normalize, user_goal):
             for item in retriever.retrieve(query, top_k=5):
@@ -490,7 +497,7 @@ class AuditablePipeline:
             if not need_ref:
                 reference_context = json.loads(retrieval_context_output.read_text(encoding="utf-8")).get("reference_context", [])
 
-            if need_web and need_ref and self._is_api_backend():
+            if need_web and need_ref:
                 LOGGER.info("Building web context and reference context in parallel")
                 with ThreadPoolExecutor(max_workers=2) as executor:
                     f_web = executor.submit(self._build_web_context, normalize=normalize, document_text=text, strict=strict)

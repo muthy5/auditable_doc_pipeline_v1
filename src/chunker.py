@@ -108,13 +108,11 @@ def _split_section_by_paragraphs(
 
     chunks: list[dict[str, Any]] = []
     buffer: list[tuple[int, int, str]] = []
+    buffer_word_count = 0
     chunk_index = start_index
 
-    def _buffer_word_count() -> int:
-        return len(" ".join(item[2] for item in buffer).split()) if buffer else 0
-
     def flush() -> None:
-        nonlocal buffer, chunk_index
+        nonlocal buffer, chunk_index, buffer_word_count
         if not buffer:
             return
 
@@ -141,21 +139,20 @@ def _split_section_by_paragraphs(
         )
         chunk_index += 1
         buffer = []
+        buffer_word_count = 0
 
     for para_start, para_end, para in normalized:
         para_words = len(para.split())
-        existing_words = _buffer_word_count()
 
-        if buffer and existing_words + para_words > target_max_words:
+        if buffer and buffer_word_count + para_words > target_max_words:
             flush()
-            existing_words = 0
 
-        if buffer and existing_words + para_words > hard_max_words:
+        if buffer and buffer_word_count + para_words > hard_max_words:
             flush()
 
         buffer.append((para_start, para_end, para))
-        buffered_words = _buffer_word_count()
-        if buffered_words >= target_min_words and buffered_words >= target_max_words:
+        buffer_word_count += para_words
+        if buffer_word_count >= target_min_words and buffer_word_count >= target_max_words:
             flush()
     flush()
 

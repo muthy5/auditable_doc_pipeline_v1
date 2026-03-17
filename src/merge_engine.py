@@ -9,6 +9,7 @@ def normalize_text(value: str) -> str:
 
 
 def merge_chunk_extractions(doc_id: str, chunk_extractions: List[Dict[str, Any]]) -> Dict[str, Any]:
+    _norm_cache: Dict[str, str] = {}
     entity_buckets: Dict[str, set[str]] = defaultdict(set)
     defined_terms: Dict[str, Dict[str, Any]] = {}
     undefined_terms: set[str] = set()
@@ -44,7 +45,11 @@ def merge_chunk_extractions(doc_id: str, chunk_extractions: List[Dict[str, Any]]
             undefined_terms.add(term)
 
         for fact in chunk.get("explicit_facts", []):
-            key = normalize_text(fact["text"])
+            raw_text = fact["text"]
+            key = _norm_cache.get(raw_text)
+            if key is None:
+                key = normalize_text(raw_text)
+                _norm_cache[raw_text] = key
             if key not in fact_clusters:
                 fact_clusters[key] = {
                     "fact_id": fact["fact_id"],
@@ -86,7 +91,10 @@ def merge_chunk_extractions(doc_id: str, chunk_extractions: List[Dict[str, Any]]
         all_outputs_produced.extend(chunk.get("outputs_produced", []))
 
         for signal in chunk.get("missing_information_signals", []):
-            key = normalize_text(signal)
+            key = _norm_cache.get(signal)
+            if key is None:
+                key = normalize_text(signal)
+                _norm_cache[signal] = key
             if key not in missing_info_clusters:
                 missing_info_clusters[key] = {
                     "text": signal,
