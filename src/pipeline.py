@@ -27,6 +27,7 @@ from .text_extractor import extract_text_from_path
 from .retriever import LocalFileRetriever
 from .schemas import load_schema
 from .validators import validate_chunks, validate_final_output
+from .token_budget import TokenWindowTracker, estimate_payload_tokens, trim_for_plan, trim_for_synthesis
 
 LOGGER = logging.getLogger(__name__)
 
@@ -75,8 +76,10 @@ class AuditablePipeline:
             claude_config = ClaudeBackendConfig(
                 api_key=self.config.claude_api_key,
                 model=self.config.claude_model,
+                max_retries=self.config.claude_max_retries,
             )
-            self.backend = ClaudeAPIBackend(config=claude_config)
+            token_tracker = TokenWindowTracker(self.config.claude_tokens_per_minute)
+            self.backend = ClaudeAPIBackend(config=claude_config, token_tracker=token_tracker)
         elif backend_name == "openai":
             openai_config = OpenAIBackendConfig(
                 api_key=self.config.openai_api_key,
@@ -221,6 +224,12 @@ class AuditablePipeline:
     def _default_parallel_chunks(self) -> int:
         """Return backend-aware default for chunk parallelism."""
         return 4 if self.backend_name in ("claude", "openai") else 1
+
+    def _trim_if_claude(self, fn: Callable[[dict[str, Any]], dict[str, Any]], payload: dict[str, Any]) -> dict[str, Any]:
+        """Apply payload trimming only for Claude backend."""
+        if self.backend_name != "claude":
+            return payload
+        return fn(payload)
 
     def run(
         self,
@@ -487,6 +496,16 @@ class AuditablePipeline:
                     existing = json.loads(output_path.read_text())
                     self.pass_runner.mark_pass_status(pass_name, _status_from_payload(existing, resumed=True), **_metadata_from_payload(existing))
                     return existing
+                if pass_name in {
+                    "03_schema_audit",
+                    "04_dependency_audit",
+                    "05_assumption_audit",
+                    "06_evidence_audit",
+                    "07_synthesize",
+                    "09_generate_plan",
+                }:
+                    estimated_tokens = estimate_payload_tokens(payload)
+                    LOGGER.debug("Pass %s estimated input tokens: %d", pass_name, estimated_tokens)
                 LOGGER.info("Starting pass %s", pass_name)
                 return self.pass_runner.run_model_pass(pass_name, prompt, schema, payload, output_path, strict)
 
@@ -501,8 +520,16 @@ class AuditablePipeline:
             else:
                 assumption_audit = run_or_load("05_assumption_audit", "05_assumption_audit.txt", "05_assumption_audit.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "web_context": web_context, "reference_context": reference_context})
                 evidence_audit = run_or_load("06_evidence_audit", "06_evidence_audit.txt", "06_evidence_audit.schema.json", {"merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "web_context": web_context, "reference_context": reference_context})
-            synthesis = run_or_load("07_synthesize", "07_synthesize.txt", "07_synthesize.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "evidence_audit": evidence_audit, "web_context": web_context, "reference_context": reference_context})
-            plan = run_or_load("09_generate_plan", "09_generate_plan.txt", "09_generate_plan.schema.json", {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "evidence_audit": evidence_audit, "synthesis": synthesis, "web_context": web_context, "reference_context": reference_context})
+            synthesis_payload = self._trim_if_claude(
+                trim_for_synthesis,
+                {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "evidence_audit": evidence_audit, "web_context": web_context, "reference_context": reference_context},
+            )
+            synthesis = run_or_load("07_synthesize", "07_synthesize.txt", "07_synthesize.schema.json", synthesis_payload)
+            plan_payload = self._trim_if_claude(
+                trim_for_plan,
+                {"task": normalize, "merge": merge, "schema_audit": schema_audit, "dependency_audit": dependency_audit, "assumption_audit": assumption_audit, "evidence_audit": evidence_audit, "synthesis": synthesis, "web_context": web_context, "reference_context": reference_context},
+            )
+            plan = run_or_load("09_generate_plan", "09_generate_plan.txt", "09_generate_plan.schema.json", plan_payload)
 
             validation = validate_final_output(synthesis, normalize, schema_audit, dependency_audit, assumption_audit, evidence_audit, load_schema(self.repo_paths.schemas_dir, "07_synthesize.schema.json"))
             if resume and has_output("08_validate_final"):
