@@ -114,3 +114,27 @@ def test_compose_prompt_uses_required_field_schema_summary(monkeypatch: pytest.M
     assert "required fields only" in prompt
     assert "- doc_id (string): Document identifier" in prompt
     assert "Optional fields omitted from prompt" in prompt
+
+
+def test_generate_json_retries_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    calls = {"n": 0}
+
+    class _Module:
+        class Anthropic:
+            def __init__(self, api_key: str) -> None:
+                self.messages = self
+
+            def create(self, **kwargs: object) -> object:
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    raise RuntimeError("rate limit exceeded")
+                return type("Response", (), {"content": [{"type": "text", "text": '{"ok": true}'}]})()
+
+    monkeypatch.setitem(sys.modules, "anthropic", _Module())
+    backend = ClaudeAPIBackend(ClaudeBackendConfig(api_key="test-key", max_retries=1))
+
+    parsed = backend.generate_json(pass_name="p", prompt_text="x", payload={})
+
+    assert parsed == {"ok": True}
+    assert calls["n"] == 2

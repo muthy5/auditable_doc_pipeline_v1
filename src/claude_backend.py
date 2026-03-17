@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 import time
 from typing import Any, Dict
 
 from .exceptions import BackendError
 from .llm_interface import LocalLLMBackend
+from .retry import RetryConfig, retry_with_backoff
 
 LOGGER = logging.getLogger(__name__)
 
@@ -56,75 +58,67 @@ class ClaudeAPIBackend(LocalLLMBackend):
         payload: Dict[str, Any],
         schema: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
-        """Generate a JSON response from the Claude API with retry logic."""
+        """Generate a JSON response from the Claude API with retry + backoff."""
         composed_prompt = self._compose_prompt(
             pass_name=pass_name,
             prompt_text=prompt_text,
             payload=payload,
             schema=schema,
         )
-        last_error: Exception | None = None
 
-        for attempt in range(self.config.max_retries + 1):
-            try:
-                call_start = time.perf_counter()
-                response = self._client.messages.create(
-                    model=self.config.model,
-                    max_tokens=self.config.max_tokens,
-                    temperature=self.config.temperature,
-                    messages=[{"role": "user", "content": composed_prompt}],
-                )
-                call_elapsed = time.perf_counter() - call_start
-                LOGGER.info(
-                    "Claude API call timing: pass=%s attempt=%d duration_seconds=%.2f",
-                    pass_name,
-                    attempt + 1,
-                    call_elapsed,
-                )
-                text_blocks: list[str] = []
-                for block in response.content:
-                    block_type = getattr(block, "type", None)
-                    if block_type is None and isinstance(block, dict):
-                        block_type = block.get("type")
-                    if block_type != "text":
-                        continue
-                    block_text = getattr(block, "text", None)
-                    if block_text is None and isinstance(block, dict):
-                        block_text = block.get("text")
-                    if isinstance(block_text, str):
-                        text_blocks.append(block_text)
-                if not text_blocks:
-                    raise BackendError("No text blocks found in Claude response content.")
-                raw_text = "".join(text_blocks)
-                parsed = self._extract_json_object(raw_text)
-                if not isinstance(parsed, dict):
-                    raise BackendError("Parsed JSON is not an object.")
-                return parsed
-            except (json.JSONDecodeError, BackendError) as exc:
-                LOGGER.warning(
-                    "Retryable error on attempt %d/%d for pass '%s': %s: %s",
-                    attempt + 1,
-                    self.config.max_retries + 1,
-                    pass_name,
-                    type(exc).__name__,
-                    exc,
-                )
-                last_error = exc
-            except Exception as exc:
-                LOGGER.warning(
-                    "API error on attempt %d/%d for pass '%s': %s: %s",
-                    attempt + 1,
-                    self.config.max_retries + 1,
-                    pass_name,
-                    type(exc).__name__,
-                    exc,
-                )
-                last_error = exc
+        def _call() -> Dict[str, Any]:
+            call_start = time.perf_counter()
+            response = self._client.messages.create(
+                model=self.config.model,
+                max_tokens=self.config.max_tokens,
+                temperature=self.config.temperature,
+                messages=[{"role": "user", "content": composed_prompt}],
+            )
+            call_elapsed = time.perf_counter() - call_start
+            LOGGER.info("Claude API call timing: pass=%s duration_seconds=%.2f", pass_name, call_elapsed)
+            text_blocks: list[str] = []
+            for block in response.content:
+                block_type = getattr(block, "type", None)
+                if block_type is None and isinstance(block, dict):
+                    block_type = block.get("type")
+                if block_type != "text":
+                    continue
+                block_text = getattr(block, "text", None)
+                if block_text is None and isinstance(block, dict):
+                    block_text = block.get("text")
+                if isinstance(block_text, str):
+                    text_blocks.append(block_text)
+            if not text_blocks:
+                raise BackendError("No text blocks found in Claude response content.")
+            raw_text = "".join(text_blocks)
+            parsed = self._extract_json_object(raw_text)
+            if not isinstance(parsed, dict):
+                raise BackendError("Parsed JSON is not an object.")
+            return parsed
 
-        raise BackendError(
-            f"Failed to produce valid JSON after {self.config.max_retries + 1} attempts "
-            f"for pass '{pass_name}': {last_error}"
-        ) from last_error
+        def _should_retry(exc: Exception) -> bool:
+            if isinstance(exc, (json.JSONDecodeError, BackendError, TimeoutError, socket.timeout)):
+                return True
+            status_code = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+            if isinstance(status_code, int):
+                return status_code in {408, 409, 425, 429, 500, 502, 503, 504}
+            text = str(exc).lower()
+            return any(token in text for token in ["rate limit", "timeout", "temporar", "overloaded", "connection"])
+
+        try:
+            return retry_with_backoff(
+                fn=_call,
+                should_retry=_should_retry,
+                config=RetryConfig(max_retries=self.config.max_retries, base_delay_s=0.5, max_delay_s=5.0),
+                on_retry=lambda attempt, exc: LOGGER.warning(
+                    "Claude retry attempt %s for pass '%s': %s", attempt, pass_name, exc
+                ),
+            )
+        except Exception as exc:
+            raise BackendError(
+                f"Failed to produce valid JSON after {self.config.max_retries + 1} attempts "
+                f"for pass '{pass_name}': {exc}"
+            ) from exc
 
     def _summarize_schema_required_fields(self, schema: Dict[str, Any]) -> str:
         """Build a compact schema summary focused on required fields."""
