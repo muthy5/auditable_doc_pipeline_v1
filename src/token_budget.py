@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import json
 import time
 from typing import Any
@@ -28,7 +27,7 @@ def strip_debug_keys(obj: Any) -> Any:
         return cleaned
     if isinstance(obj, list):
         return [strip_debug_keys(item) for item in obj]
-    return copy.deepcopy(obj)
+    return obj
 
 
 class TokenWindowTracker:

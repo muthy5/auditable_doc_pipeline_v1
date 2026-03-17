@@ -28,6 +28,17 @@ class PassRunner:
         self.validation_failures: list[str] = []
         self.timings: dict[str, float] = {}
         self.pass_outcomes: dict[str, dict[str, Any]] = {}
+        self._validator_cache: dict[str, Draft202012Validator] = {}
+
+    def _get_validator(self, schema_filename: str) -> Draft202012Validator:
+        """Return a cached validator for the given schema file."""
+        cached = self._validator_cache.get(schema_filename)
+        if cached is not None:
+            return cached
+        schema = load_schema(self.schemas_dir, schema_filename)
+        validator = Draft202012Validator(schema)
+        self._validator_cache[schema_filename] = validator
+        return validator
 
     def _record_timing(self, pass_name: str, start_time: float, end_time: float) -> None:
         """Store elapsed seconds for a pass."""
@@ -47,7 +58,7 @@ class PassRunner:
     def write_timings(self, output_path: Path, total_time_s: float) -> None:
         """Write timing summary to disk."""
         payload = {"passes": self.timings, "total_pipeline_seconds": total_time_s}
-        output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        output_path.write_text(json.dumps(payload, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
 
     def _handle_schema_failure(
         self,
@@ -59,7 +70,7 @@ class PassRunner:
     ) -> tuple[Path, str]:
         failed_path = output_path.with_suffix(".failed.json")
         failed_path.parent.mkdir(parents=True, exist_ok=True)
-        failed_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        failed_path.write_text(json.dumps(payload, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
         message = (
             f"Schema validation failed in pass '{pass_name}': {error.message}. "
             f"Failed output written to {failed_path}."
@@ -74,7 +85,7 @@ class PassRunner:
 
     def validate_with_schema(self, schema_filename: str, payload: dict[str, Any]) -> None:
         """Validate payload against schema without writing output."""
-        Draft202012Validator(load_schema(self.schemas_dir, schema_filename)).validate(payload)
+        self._get_validator(schema_filename).validate(payload)
 
     def _build_fallback_from_schema(self, schema: dict[str, Any]) -> dict[str, Any]:
         """Build a minimal fallback payload from required schema fields."""
@@ -121,7 +132,7 @@ class PassRunner:
             model_override=model_override,
         )
         try:
-            Draft202012Validator(schema).validate(output)
+            self._get_validator(schema_filename).validate(output)
         except ValidationError as error:
             failed_path, validation_error = self._handle_schema_failure(pass_name, output, output_path, error, strict)
             fallback = self._build_fallback_from_schema(schema)
@@ -130,7 +141,7 @@ class PassRunner:
             fallback["_failed_output_path"] = str(failed_path)
             fallback["_validation_error"] = validation_error
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(json.dumps(fallback, indent=2, ensure_ascii=False), encoding="utf-8")
+            output_path.write_text(json.dumps(fallback, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
             self._record_timing(pass_name, start, time.perf_counter())
             self._record_outcome(
                 pass_name,
@@ -141,7 +152,7 @@ class PassRunner:
             )
             return fallback
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(output, indent=2, ensure_ascii=False), encoding="utf-8")
+        output_path.write_text(json.dumps(output, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
         self._record_timing(pass_name, start, time.perf_counter())
         self._record_outcome(pass_name, "completed")
         return output
@@ -158,7 +169,7 @@ class PassRunner:
         start = time.perf_counter()
         schema = load_schema(self.schemas_dir, schema_filename)
         try:
-            Draft202012Validator(schema).validate(payload)
+            self._get_validator(schema_filename).validate(payload)
         except ValidationError as error:
             failed_path, validation_error = self._handle_schema_failure(pass_name, payload, output_path, error, strict)
             fallback = self._build_fallback_from_schema(schema)
@@ -167,7 +178,7 @@ class PassRunner:
             fallback["_failed_output_path"] = str(failed_path)
             fallback["_validation_error"] = validation_error
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(json.dumps(fallback, indent=2, ensure_ascii=False), encoding="utf-8")
+            output_path.write_text(json.dumps(fallback, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
             self._record_timing(pass_name, start, time.perf_counter())
             self._record_outcome(
                 pass_name,
@@ -178,7 +189,7 @@ class PassRunner:
             )
             return fallback
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        output_path.write_text(json.dumps(payload, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
         self._record_timing(pass_name, start, time.perf_counter())
         self._record_outcome(pass_name, "completed")
         return payload
