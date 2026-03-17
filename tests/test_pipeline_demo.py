@@ -95,3 +95,65 @@ def test_demo_pipeline_accepts_fast_mode_alias(tmp_path: Path) -> None:
 
     assert not (run_dir / "passes" / "05_assumption_audit.json").exists()
     assert not (run_dir / "passes" / "06_evidence_audit.json").exists()
+
+
+def test_fast_mode_report_marks_skipped_passes(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    input_path = repo_root / "examples" / "lemonade_plan_missing_juicing.txt"
+    pipeline = AuditablePipeline(repo_root=repo_root, backend_name="demo")
+    run_dir = pipeline.run(input_path=input_path, runs_dir=tmp_path / "runs", fast=True)
+
+    report = __import__("json").loads((run_dir / "report.json").read_text(encoding="utf-8"))
+    assert report["per_pass_status"]["05_assumption_audit"] == "skipped"
+    assert report["per_pass_status"]["06_evidence_audit"] == "skipped"
+    assert report["per_pass_status"]["07_synthesize"] in {"completed", "resumed"}
+
+
+def test_non_strict_schema_failure_writes_fallback_and_report_status(tmp_path: Path) -> None:
+    import json
+
+    repo_root = Path(__file__).resolve().parents[1]
+    input_path = repo_root / "examples" / "lemonade_plan_missing_juicing.txt"
+    pipeline = AuditablePipeline(repo_root=repo_root, backend_name="demo")
+    original_generate = pipeline.pass_runner.backend.generate_json
+
+    def patched_generate_json(pass_name, prompt_text, payload, schema=None):
+        if pass_name == "04_dependency_audit":
+            return {"invalid": "payload"}
+        return original_generate(pass_name, prompt_text, payload, schema)
+
+    pipeline.pass_runner.backend.generate_json = patched_generate_json
+    run_dir = pipeline.run(input_path=input_path, runs_dir=tmp_path / "runs", strict=False)
+
+    failed_path = run_dir / "passes" / "04_dependency_audit.failed.json"
+    canonical_path = run_dir / "passes" / "04_dependency_audit.json"
+    assert failed_path.exists()
+    assert canonical_path.exists()
+    canonical = json.loads(canonical_path.read_text(encoding="utf-8"))
+    assert canonical["_schema_validation_failed"] is True
+    assert canonical["_fallback_generated"] is True
+
+    report = json.loads((run_dir / "report.json").read_text(encoding="utf-8"))
+    assert report["per_pass_status"]["04_dependency_audit"] == "completed_with_fallback"
+
+
+def test_resume_marks_fallback_pass_as_resumed(tmp_path: Path) -> None:
+    import json
+
+    repo_root = Path(__file__).resolve().parents[1]
+    input_path = repo_root / "examples" / "lemonade_plan_missing_juicing.txt"
+    pipeline = AuditablePipeline(repo_root=repo_root, backend_name="demo")
+    original_generate = pipeline.pass_runner.backend.generate_json
+
+    def patched_generate_json(pass_name, prompt_text, payload, schema=None):
+        if pass_name == "03_schema_audit":
+            return {"broken": True}
+        return original_generate(pass_name, prompt_text, payload, schema)
+
+    pipeline.pass_runner.backend.generate_json = patched_generate_json
+    first_run_dir = pipeline.run(input_path=input_path, runs_dir=tmp_path / "runs", strict=False)
+
+    second_pipeline = AuditablePipeline(repo_root=repo_root, backend_name="demo")
+    resumed_run_dir = second_pipeline.run(input_path=input_path, runs_dir=tmp_path / "runs", run_dir=first_run_dir, resume=True, strict=False)
+    report = json.loads((resumed_run_dir / "report.json").read_text(encoding="utf-8"))
+    assert report["per_pass_status"]["03_schema_audit"] == "completed_with_fallback"

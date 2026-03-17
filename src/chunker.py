@@ -70,12 +70,27 @@ def split_into_sections(text: str) -> list[Section]:
     return sections or [Section(None, 0, len(text), text)]
 
 
+def _split_oversized_paragraph(paragraph: tuple[int, int, str], hard_max_words: int) -> list[tuple[int, int, str]]:
+    para_start, para_end, para_text = paragraph
+    words = para_text.split()
+    if len(words) <= hard_max_words:
+        return [paragraph]
+    pieces: list[tuple[int, int, str]] = []
+    cursor = para_start
+    for start in range(0, len(words), hard_max_words):
+        part_text = " ".join(words[start : start + hard_max_words])
+        part_end = cursor + len(part_text)
+        pieces.append((cursor, min(part_end, para_end), part_text))
+        cursor = part_end + 1
+    return pieces
+
+
 def _split_section_by_paragraphs(
     section: Section,
     doc_id: str,
     start_index: int,
     target_min_words: int,
-    _target_max_words: int,
+    target_max_words: int,
     hard_max_words: int,
     overlap_max_words: int,
 ) -> list[dict[str, Any]]:
@@ -86,9 +101,16 @@ def _split_section_by_paragraphs(
         if match.group(0).strip()
     ] or [(0, len(section.text), section.text)]
 
+    normalized: list[tuple[int, int, str]] = []
+    for paragraph in paragraph_spans:
+        normalized.extend(_split_oversized_paragraph(paragraph, hard_max_words))
+
     chunks: list[dict[str, Any]] = []
     buffer: list[tuple[int, int, str]] = []
     chunk_index = start_index
+
+    def _buffer_word_count() -> int:
+        return len(" ".join(item[2] for item in buffer).split()) if buffer else 0
 
     def flush() -> None:
         nonlocal buffer, chunk_index
@@ -119,13 +141,20 @@ def _split_section_by_paragraphs(
         chunk_index += 1
         buffer = []
 
-    for para_start, para_end, para in paragraph_spans:
+    for para_start, para_end, para in normalized:
         para_words = len(para.split())
-        existing_words = len(" ".join(item[2] for item in buffer).split()) if buffer else 0
+        existing_words = _buffer_word_count()
+
+        if buffer and existing_words + para_words > target_max_words:
+            flush()
+            existing_words = 0
+
         if buffer and existing_words + para_words > hard_max_words:
             flush()
+
         buffer.append((para_start, para_end, para))
-        if len(" ".join(item[2] for item in buffer).split()) >= target_min_words:
+        buffered_words = _buffer_word_count()
+        if buffered_words >= target_min_words and buffered_words >= target_max_words:
             flush()
     flush()
 
@@ -181,7 +210,7 @@ def chunk_document(
             doc_id=doc["doc_id"],
             start_index=chunk_index,
             target_min_words=target_min_words,
-            _target_max_words=target_max_words,
+            target_max_words=target_max_words,
             hard_max_words=hard_max_words,
             overlap_max_words=overlap_max_words,
         )

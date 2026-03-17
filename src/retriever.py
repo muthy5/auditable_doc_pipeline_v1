@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .chunker import chunk_document
+from .text_extractor import extract_text_from_path
 
 _SUPPORTED_SUFFIXES = {".txt", ".md", ".pdf", ".docx"}
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
@@ -38,24 +39,7 @@ class LocalFileRetriever:
         self._index_files()
 
     def _read_file(self, path: Path) -> str:
-        suffix = path.suffix.lower()
-        if suffix in {".txt", ".md"}:
-            return path.read_text(encoding="utf-8", errors="ignore")
-        if suffix == ".pdf":
-            if importlib.util.find_spec("pypdf") is None:
-                return ""
-            from pypdf import PdfReader
-
-            reader = PdfReader(str(path))
-            return "\n".join((page.extract_text() or "") for page in reader.pages)
-        if suffix == ".docx":
-            if importlib.util.find_spec("docx") is None:
-                return ""
-            from docx import Document
-
-            document = Document(str(path))
-            return "\n".join(paragraph.text for paragraph in document.paragraphs)
-        return ""
+        return extract_text_from_path(path)
 
     def _iter_reference_files(self) -> list[Path]:
         if not self.reference_dir.exists() or not self.reference_dir.is_dir():

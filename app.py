@@ -17,7 +17,9 @@ from app_utils import (
     collect_run_report,
     format_gap_plain_english,
     format_plan_for_display,
+    get_available_backends,
     get_status_color,
+    is_streamlit_cloud_environment,
     parse_final_sections,
     parse_plan_output,
     read_final_markdown,
@@ -25,6 +27,7 @@ from app_utils import (
 from src.config import PipelineConfig
 from src.document_classifier import SUPPORTED_DOCUMENT_TYPES
 from src.pipeline import AuditablePipeline
+from src.text_extractor import extract_text_from_path
 
 st.set_page_config(page_title="Auditable Document Pipeline", page_icon="📄", layout="wide")
 st.title("Auditable Document Pipeline")
@@ -345,9 +348,13 @@ def main() -> None:
     default_claude_api_key = _secret_or_env("ANTHROPIC_API_KEY")
     default_brave_api_key = _secret_or_env("BRAVE_API_KEY")
 
+    cloud_mode = is_streamlit_cloud_environment()
     with st.sidebar:
         st.header("Run Settings")
-        backend = st.selectbox("Backend", ["demo", "ollama", "claude"], index=0)
+        backend_options = get_available_backends(cloud_mode)
+        backend = st.selectbox("Backend", backend_options, index=0)
+        if cloud_mode:
+            st.caption("Ollama is hidden in cloud mode. Use demo/Claude here, or self-host locally to use Ollama.")
 
         claude_api_key = ""
         claude_model = "claude-sonnet-4-20250514"
@@ -382,14 +389,14 @@ def main() -> None:
         document_type_options = ["auto", *sorted(SUPPORTED_DOCUMENT_TYPES)]
         document_type_choice = st.selectbox("Document type", document_type_options, index=0)
 
-    uploaded_file = st.file_uploader("Upload a .txt file", type=["txt"])
+    uploaded_file = st.file_uploader("Upload main document", type=["txt", "md", "pdf", "docx"])
     run_clicked = st.button("Run Pipeline", type="primary", disabled=uploaded_file is None)
 
     if not run_clicked:
         return
 
     if uploaded_file is None:
-        st.error("Please upload a .txt file before running the pipeline.")
+        st.error("Please upload a main document (.txt, .md, .pdf, or .docx) before running the pipeline.")
         return
     if backend == "claude" and not claude_api_key:
         st.error("Please provide a Claude API key.")
@@ -406,6 +413,9 @@ def main() -> None:
             temp_root = Path(temp_dir)
             input_path = temp_root / uploaded_file.name
             input_path.write_bytes(uploaded_file.getvalue())
+            if not extract_text_from_path(input_path).strip():
+                st.error("The uploaded main document could not be parsed into text. Try a text-based .txt/.md file or install optional PDF/DOCX parsers on the host.")
+                return
 
             resolved_reference_dir = reference_dir_input.strip()
             if uploaded_references:

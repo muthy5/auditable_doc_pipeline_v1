@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -204,3 +205,17 @@ def format_item(item: dict[str, Any]) -> str:
 def read_final_markdown(run_dir: Path) -> str:
     """Read the rendered final markdown answer."""
     return (run_dir / "final" / "final_answer.md").read_text(encoding="utf-8")
+
+
+def is_streamlit_cloud_environment(env: dict[str, str] | None = None) -> bool:
+    """Return True when running in a Streamlit Community Cloud-like environment."""
+    active_env = env or os.environ
+    markers = ["STREAMLIT_SHARING", "STREAMLIT_CLOUD", "STREAMLIT_RUNTIME_ENV"]
+    return any(str(active_env.get(marker, "")).strip().lower() in {"1", "true", "cloud", "community"} for marker in markers)
+
+
+def get_available_backends(cloud_mode: bool) -> list[str]:
+    """Return UI backend choices based on deployment environment."""
+    if cloud_mode:
+        return ["demo", "claude"]
+    return ["demo", "ollama", "claude"]
